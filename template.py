@@ -108,7 +108,7 @@ async def get_media_info_async():
         info_dict = {"artist": info.artist, "title": info.title}
         return info_dict
 
-def handle_serial_input(ser, volume):
+def handle_serial_input(ser, volume_i):
     if ser.in_waiting: 
         line = ser.readline().decode('utf-8').strip()
 
@@ -116,14 +116,14 @@ def handle_serial_input(ser, volume):
             try:
                 new_volume = int(line[4:])
                 new_volume = max(0, min(100, new_volume))  # clamp to 0–100
-                volume.SetMasterVolumeLevelScalar(new_volume / 100.0, None)
+                volume_i.SetMasterVolumeLevelScalar(new_volume / 100.0, None)
                 debugPrint(f"[Arduino -> PC] Volume set to {new_volume}%")
             except ValueError:
                 print("[Error] Invalid volume format:", line)
     return
 
-def get_audio_settings(volume):
-    current_volume = int(volume.GetMasterVolumeLevelScalar() * 100)
+def get_audio_settings(volume_i):
+    current_volume = int(volume_i.GetMasterVolumeLevelScalar() * 100)
     return current_volume
 
 def get_window_title():
@@ -172,7 +172,7 @@ def main(port: str | None):
         # Set up audio device and volume interface
         devices = AudioUtilities.GetSpeakers()
         interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume = interface.QueryInterface(IAudioEndpointVolume)
+        volume_i = interface.QueryInterface(IAudioEndpointVolume)
         # Start background thread to update media info
         stop_event = threading.Event()
         media_thread = threading.Thread(target=get_media_info_loop, args=(stop_event,), daemon=True)
@@ -180,9 +180,9 @@ def main(port: str | None):
 
         while True:
             # Check incoming serial
-            handle_serial_input(ser, volume)
+            handle_serial_input(ser, volume_i)
             # Get audio settings
-            current_volume = get_audio_settings(volume)
+            current_volume = get_audio_settings(volume_i)
             # Get window_title
             window_title = get_window_title()
             # Get media_info
