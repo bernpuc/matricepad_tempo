@@ -1,4 +1,11 @@
-# Organizing the functionality into discreet functions
+'''
+This version uses threading to isolate the WinRT fetching to a separate thread with a
+different rate.
+WinRT library returns song and artist info when playing audio from a streaming service 
+within a browser window.
+Audio players that display song and artist info in the window title bar are supported
+using the pycaw library.
+'''
 import argparse
 import time
 import serial
@@ -13,7 +20,7 @@ import win32process
 import re
 import datetime
 import threading
-DEBUG = True
+DEBUG = True    # Set to True for debugging output
 def debugPrint(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -49,7 +56,6 @@ def get_audio_playing_window_title():
         "firefox.exe": "Mozilla Firefox",
         "msedge.exe": "Microsoft Edge",
         "opera.exe": "Opera",
-        "microsoft.media.player.exe": "Media Player",
         # add other browsers if needed
     }
 
@@ -101,7 +107,7 @@ async def get_media_info_async():
 
         info_dict = {"artist": info.artist, "title": info.title}
         return info_dict
-       
+
 def handle_serial_input(ser, volume):
     if ser.in_waiting: 
         line = ser.readline().decode('utf-8').strip()
@@ -115,15 +121,15 @@ def handle_serial_input(ser, volume):
             except ValueError:
                 print("[Error] Invalid volume format:", line)
     return
-   
+
 def get_audio_settings(volume):
     current_volume = int(volume.GetMasterVolumeLevelScalar() * 100)
     return current_volume
-   
+
 def get_window_title():
     window_title = get_audio_playing_window_title()
     return window_title
-   
+
 def get_media_info_loop(stop_event):
     global shared_media_info
     while not stop_event.is_set():
@@ -134,7 +140,7 @@ def get_media_info_loop(stop_event):
         except Exception as e:
             print(f"[Media Info Thread Error] {e}")
         time.sleep(3)
-   
+
 def get_serial_packet(window_title, media_info, current_volume):
     song = ""
     artist = ""
@@ -148,6 +154,7 @@ def get_serial_packet(window_title, media_info, current_volume):
         artist = media_info["artist"]
         song = media_info["title"]
         debugPrint(f"media: {artist} {song}")
+
     artist = "[ " + artist + " ]"
     serial_output = f"{song.strip()}||{artist.strip()}||{current_volume}\n"
     debugPrint(serial_output)
