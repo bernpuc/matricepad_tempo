@@ -15,21 +15,15 @@ from winrt.windows.media.control import \
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume, IAudioSessionManager2
 from pycaw.constants import AudioSessionState
-from ctypes import cast, POINTER
 from serial.serialutil import SerialException
 import win32gui
 import win32process
 import re
-import datetime
 import threading
 DEBUG = False    # Set to True for debugging output
 def debugPrint(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
-
-# Global variable to hold the serial port object
-# It's initialized to None, which indicates no active connection
-global_ser = None
 
 def establish_serial_connection(port, baud_rate, timeout=1, retries=5, delay_between_retries=2):
     """
@@ -79,6 +73,7 @@ def get_title_song(input_string):
         return "", ""
 
 def get_audio_playing_window_title():
+    """Get name of web browser or song title"""
     browser_names = {
         "chrome.exe": "Google Chrome",
         "firefox.exe": "Mozilla Firefox",
@@ -195,8 +190,9 @@ def send_packet(ser, serial_packet: str):
     return
 
 def main(port: str | None):
-    global global_ser
-    
+    """Main"""
+    global_ser = None
+
     # Set up audio device and volume interface
     devices = AudioUtilities.GetSpeakers()
     interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
