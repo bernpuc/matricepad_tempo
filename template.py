@@ -15,20 +15,48 @@ from winrt.windows.media.control import \
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume, IAudioSessionManager2
 from pycaw.constants import AudioSessionState
+from ctypes import cast, POINTER
+from serial.serialutil import SerialException
 import win32gui
 import win32process
 import re
 import datetime
 import threading
-DEBUG = True    # Set to True for debugging output
+DEBUG = False    # Set to True for debugging output
 def debugPrint(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
+
+# Global variable to hold the serial port object
+# It's initialized to None, which indicates no active connection
+global_ser = None
+
+def establish_serial_connection(port, baud_rate, timeout=1, retries=5, delay_between_retries=2):
+    """
+    Attempts to establish a serial connection with retry logic.
+    Returns the serial object on success, None on failure.
+    """
+    for attempt in range(retries):
+        print(f"Attempting to connect to {port} (Attempt {attempt + 1}/{retries})...")
+        try:
+            ser = serial.Serial(port, baud_rate, timeout=timeout)
+            time.sleep(2)  # Give Arduino time to reset and initialize
+            print(f"Successfully connected to serial port {port}.")
+            return ser
+        except SerialException as e:
+            print(f"Failed to connect to {port}: {e}")
+            time.sleep(delay_between_retries)
+        except Exception as e:
+            print(f"An unexpected error occurred while connecting: {e}")
+            time.sleep(delay_between_retries)
+    print(f"Failed to establish serial connection to {port} after {retries} attempts.")
+    return None
 
 # Microsoft Zune. title field only. Formatted with '<track number> <artist> - <song title>'
 # But
 # VLC Player is Formatted '<track number> <artist> - <song title> - VLC media player'
 def get_title_song(input_string):
+    """Get song title from various formats"""
     # List of (regex, group count or a custom parser)
     regex_patterns = [
         (r"^(\d+)\s(.*)\s-\s(.*)\s-\s.*$", lambda m: {'track': m.group(1), 'artist': m.group(2), 'song': m.group(3)}),
@@ -120,6 +148,8 @@ def handle_serial_input(ser, volume_i):
                 debugPrint(f"[Arduino -> PC] Volume set to {new_volume}%")
             except ValueError:
                 print("[Error] Invalid volume format:", line)
+        else:
+            print(line)
     return
 
 def get_audio_settings(volume_i):
@@ -165,42 +195,64 @@ def send_packet(ser, serial_packet: str):
     return
 
 def main(port: str | None):
+    global global_ser
+    
+    # Set up audio device and volume interface
+    devices = AudioUtilities.GetSpeakers()
+    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    volume_i = interface.QueryInterface(IAudioEndpointVolume)
+    # Start background thread to update media info
+    stop_event = threading.Event()
+    media_thread = threading.Thread(target=get_media_info_loop, args=(stop_event,), daemon=True)
+    media_thread.start()
+
     try:
-        # Set up serial communication
-        ser = serial.Serial(port, 115200, timeout=1)
-        time.sleep(2)
-        # Set up audio device and volume interface
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume_i = interface.QueryInterface(IAudioEndpointVolume)
-        # Start background thread to update media info
-        stop_event = threading.Event()
-        media_thread = threading.Thread(target=get_media_info_loop, args=(stop_event,), daemon=True)
-        media_thread.start()
-
         while True:
-            # Check incoming serial
-            handle_serial_input(ser, volume_i)
-            # Get audio settings
-            current_volume = get_audio_settings(volume_i)
-            # Get window_title
-            window_title = get_window_title()
-            # Get media_info
-            with media_info_lock:
-                media_info = shared_media_info.copy()
-            # Assemble serial packet
-            serial_packet = get_serial_packet(window_title, media_info, current_volume)
-            # Send serial packet
-            send_packet(ser, serial_packet)
-            time.sleep(.1)
+            if global_ser is None or not global_ser.is_open:
+                print("Serial port not connected or closed. Attempting to reconnect...")
+                global_ser = establish_serial_connection(port, 115200)
+                if global_ser is None:
+                    print("Waiting before next reconnection attempt...")
+                    time.sleep(5)  # Wait longer before retrying connection
+                    continue # Skip the rest of the loop and try to reconnect again
+            try:
+                # Check incoming serial
+                handle_serial_input(global_ser, volume_i)
+                # Get audio settings
+                current_volume = get_audio_settings(volume_i)
+                # Get window_title
+                window_title = get_window_title()
+                # Get media_info
+                with media_info_lock:
+                    if shared_media_info is not None:
+                        media_info = shared_media_info.copy()
+                # Assemble serial packet
+                serial_packet = get_serial_packet(window_title, media_info, current_volume)
+                # Send serial packet
+                send_packet(global_ser, serial_packet)
+                
+            except SerialException as e:
+                print(f"Serial communication error: {e}. Attempting to reconnect.")
+                if global_ser and global_ser.is_open:
+                    global_ser.close()
+                global_ser = None # Mark as disconnected, next loop iteration will reconnect
+                continue # Immediately try to reconnect
 
+            except Exception as e:
+                print(f"An unexpected error occurred in main loop: {e}")
+                # Consider if this error also warrants closing the serial port
+                # For now, it will likely be caught by the next SerialException if it affects serial comms
+
+            time.sleep(0.1)
+        
     except KeyboardInterrupt:
         debugPrint("\nShutting down gracefully.")
         stop_event.set()
 
 if __name__ == "__main__":
+    default_comm_port = "com4"
     parser = argparse.ArgumentParser(description="A script that runs forever.")
-    parser.add_argument("--port", type=str, help="Comm Port, default is com4", default="com4")
+    parser.add_argument("--port", type=str, help="Comm Port, default is com4", default=default_comm_port)
     args = parser.parse_args()
 
     media_info_lock = threading.Lock()
