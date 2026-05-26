@@ -13,6 +13,12 @@
 // 128px / 6px-per-char (5px glyph + 1px spacing) = 21 chars at text size 1
 #define DISPLAY_CHARS_PER_LINE 21
 #define MAX_SERIAL_BUFFER 256
+#define ARTIST_MAX_CHARS DISPLAY_CHARS_PER_LINE
+
+// Layout y-positions (32px height, 3 rows at 10px spacing)
+#define ROW0_Y  0   // song line 1
+#define ROW1_Y 10   // song line 2
+#define ROW2_Y 20   // artist (mute icon overlaps right end)
 
 // Encoder pins
 #define ENCODER_PIN_CLK 20
@@ -41,8 +47,14 @@ String line1 = "";
 String line2 = "";
 String artist = "";
 
-// Track if we’ve synced volume from PC yet
+// Track if we've synced volume from PC yet
 bool volumeInitialized = false;
+bool isMuted = false;
+
+// 8x8 muted-speaker bitmap: speaker body (cols 0-2), gap (col 3), X marker (cols 4-7)
+static const uint8_t PROGMEM muteIcon[] = {
+    0x00, 0x20, 0x69, 0xE6, 0xE6, 0x69, 0x20, 0x00
+};
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -65,6 +77,28 @@ int lastButtonState = HIGH;
 unsigned long lastDebounceTime = 0;
 const int debounceDelay = 50;
 
+void drawMuteIcon() {
+    if (isMuted) {
+        display.drawBitmap(120, ROW2_Y, muteIcon, 8, 8, SSD1306_WHITE);
+    }
+}
+
+void drawMediaDisplay() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setCursor(0, ROW0_Y);
+    display.println(line1);
+    display.setCursor(0, ROW1_Y);
+    display.println(line2);
+    if (artist.length() > ARTIST_MAX_CHARS) {
+        artist = artist.substring(0, ARTIST_MAX_CHARS - 3) + "...";
+    }
+    display.setCursor(0, ROW2_Y);
+    display.println(artist);
+    drawMuteIcon();
+    display.display();
+}
+
 void setup() {
     delay(2000);
     Serial.begin(115200);
@@ -86,7 +120,7 @@ void setup() {
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0);
+    display.setCursor(0, 12);  // vertically centered in 32px
     display.println("Waiting for data...");
     display.display();
 
@@ -116,20 +150,7 @@ void loop() {
                 splitTitleIntoLines(songTitle, line1, line2, DISPLAY_CHARS_PER_LINE);
 
                 if (!volumeBeingAdjusted && !muteDisplayed) {
-                    display.clearDisplay();
-                    display.setTextSize(1);
-                    display.setCursor(0, 0);
-                    display.println(line1);
-                    display.setCursor(0, 8);
-                    display.println(line2);
-
-                    if (artist.length() > DISPLAY_CHARS_PER_LINE) {
-                        artist = artist.substring(0, DISPLAY_CHARS_PER_LINE - 3) + "...";
-                    }
-
-                    display.setCursor(0, 24);
-                    display.println(artist);
-                    display.display();
+                    drawMediaDisplay();
                 }
 
                 connected = true;
@@ -153,13 +174,14 @@ void loop() {
 
     if ((millis() - lastDebounceTime) > debounceDelay) {
         if (reading == LOW && lastButtonState == HIGH) {
+            isMuted = !isMuted;
             Serial.println("MUTE");  // Send to Python
 
-            // Display large "MUTE"
+            // Display large "MUTE" / "UNMUTE" feedback, vertically centered
             display.clearDisplay();
             display.setTextSize(3);
-            display.setCursor(10, 5);
-            display.println("MUTE");
+            display.setCursor(10, 4);  // vertically centered in 32px for text size 3 (24px tall)
+            display.println(isMuted ? "MUTE" : "UNMUTE");
             display.display();
 
             muteDisplayed = true;
@@ -172,18 +194,7 @@ void loop() {
     // Clear mute display after 1s
     if (muteDisplayed && (millis() - muteDisplayStart > 1000)) {
         muteDisplayed = false;
-        if (artist.length() > DISPLAY_CHARS_PER_LINE) {
-            artist = artist.substring(0, DISPLAY_CHARS_PER_LINE - 3) + "...";
-        }
-        display.clearDisplay();
-        display.setTextSize(1);
-        display.setCursor(0, 0);
-        display.println(line1);
-        display.setCursor(0, 8);
-        display.println(line2);
-        display.setCursor(0, 24);
-        display.println(artist);
-        display.display();
+        drawMediaDisplay();
     }
 
     // --- Handle Encoder Rotation ---
@@ -203,7 +214,7 @@ void loop() {
 
         display.clearDisplay();
         display.setTextSize(2);
-        display.setCursor(10, 10);
+        display.setCursor(10, 8);  // vertically centered in 32px for text size 2 (16px tall)
         display.print("Vol: ");
         display.print(encoderPosition);
         display.print("%");
@@ -218,22 +229,8 @@ void loop() {
     // --- Restore OLED after volume inactivity ---
     if (volumeBeingAdjusted && (millis() - lastEncoderAdjustTime > 1000)) {
         volumeBeingAdjusted = false;
-
         if (!muteDisplayed) {
-            display.clearDisplay();
-            display.setTextSize(1);
-            display.setCursor(0, 0);
-            display.println(line1);
-            display.setCursor(0, 8);
-            display.println(line2);
-
-            if (artist.length() > 28) {
-                artist = artist.substring(0, 25) + "...";
-            }
-
-            display.setCursor(0, 24);
-            display.println(artist);
-            display.display();
+            drawMediaDisplay();
         }
     }
 
@@ -256,7 +253,7 @@ void loop() {
             Key k = customKeypad.key[i];
             if (k.kstate == PRESSED) {
                 switch (k.kchar) {
-                    case 'M': Consumer.write(MEDIA_VOLUME_MUTE); break;
+                    case 'M': isMuted = !isMuted; Consumer.write(MEDIA_VOLUME_MUTE); break;
                     case 'R': Consumer.write(MEDIA_PREVIOUS);    break;
                     case 'P': Consumer.write(MEDIA_PLAY_PAUSE);  break;
                     case 'F': Consumer.write(MEDIA_NEXT);        break;
