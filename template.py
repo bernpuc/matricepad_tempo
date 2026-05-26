@@ -9,6 +9,7 @@ using the pycaw library.
 import argparse
 import time
 import serial
+from serial.tools import list_ports
 import asyncio
 from winrt.windows.media.control import \
     GlobalSystemMediaTransportControlsSessionManager as MediaManager
@@ -19,6 +20,20 @@ import win32gui
 import win32process
 import re
 import threading
+ARDUINO_VID_PID = [("1B4F", "9206"), ("1B4F", "9205"), ("2341", "8036")]
+
+def find_arduino_port(override=None):
+    if override:
+        return override
+    for port in list_ports.comports():
+        if port.vid and port.pid:
+            vid = f"{port.vid:04X}"
+            pid = f"{port.pid:04X}"
+            if (vid, pid) in ARDUINO_VID_PID:
+                print(f"Auto-detected Arduino on {port.device} ({port.description})")
+                return port.device
+    raise RuntimeError("Arduino not found. Plug in the board or use --port to specify.")
+
 DEBUG = False    # Set to True for debugging output
 def debugPrint(*args, **kwargs):
     if DEBUG:
@@ -245,11 +260,10 @@ def main(port: str | None):
         stop_event.set()
 
 if __name__ == "__main__":
-    default_comm_port = "com4"
     parser = argparse.ArgumentParser(description="A script that runs forever.")
-    parser.add_argument("--port", type=str, help="Comm Port, default is com4", default=default_comm_port)
+    parser.add_argument("--port", type=str, help="COM port (auto-detected if omitted)", default=None)
     args = parser.parse_args()
 
     media_info_lock = threading.Lock()
     shared_media_info = {}
-    main(args.port)
+    main(find_arduino_port(args.port))
