@@ -12,8 +12,7 @@ import serial
 import asyncio
 from winrt.windows.media.control import \
     GlobalSystemMediaTransportControlsSessionManager as MediaManager
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume, IAudioSessionManager2
+from pycaw.pycaw import AudioUtilities
 from pycaw.constants import AudioSessionState
 from serial.serialutil import SerialException
 import win32gui
@@ -195,8 +194,7 @@ def main(port: str | None):
 
     # Set up audio device and volume interface
     devices = AudioUtilities.GetSpeakers()
-    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-    volume_i = interface.QueryInterface(IAudioEndpointVolume)
+    volume_i = devices.EndpointVolume
     # Start background thread to update media info
     stop_event = threading.Event()
     media_thread = threading.Thread(target=get_media_info_loop, args=(stop_event,), daemon=True)
