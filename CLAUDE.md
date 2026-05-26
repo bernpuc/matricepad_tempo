@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MatricePad Tempo is a two-component embedded system:
 
-- **Arduino firmware** (`arduino/matrice_pad_tempo/matrice_pad_tempo.ino`) — runs on the Matrice Pro board. Drives a 128×32 OLED, reads a rotary encoder for volume control, handles a 2×2 keypad matrix that sends HID keyboard events (F13–F16), and communicates with the PC over USB serial at 115200 baud.
-- **Python host script** (`windows/tempo_v1.0.py`) — runs on Windows. Polls Windows audio state and sends media info to the Arduino. Handles incoming volume/mute commands from the Arduino.
+- **Arduino firmware** (`arduino/matrice_pad_tempo/matrice_pad_tempo.ino`) — runs on the Matrice Pro board. Drives a 128×32 OLED, reads a rotary encoder for volume control, handles a 2×2 keypad matrix that sends HID consumer media keys, and communicates with the PC over USB serial at 115200 baud.
+- **Python host script** (`template.py`) — runs on Windows. Polls Windows audio state via WinRT and pycaw, sends media info to the Arduino, and handles incoming volume/mute commands from the Arduino.
 
 ## Serial Protocol
 
@@ -23,33 +23,37 @@ The Arduino only syncs `encoderPosition` from the first valid PC message (`volum
 
 ## Running the Python Script
 
-The venv is at `.venv/` (Python 3.14). Activate and run:
+The venv is at `.venv310/` (Python 3.10 — required for winrt cp310 wheels). Activate and run:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python windows\tempo_v1.0.py
+.\.venv310\Scripts\Activate.ps1
+python template.py --port COM6
 ```
-
-The COM port is hardcoded as `COM10` in `tempo_v1.0.py:10` — change it to match the Arduino's assigned port.
 
 ## Python Dependencies
 
-Installed in `.venv/`. Key packages:
+Installed in `.venv310/`. Key packages:
 
 - `pyserial` — serial communication
-- `pycaw` — Windows Core Audio API (volume get/set)
+- `pycaw` — Windows Core Audio API (volume get/set via `AudioDevice.EndpointVolume`)
 - `comtypes` — COM interface bridge used by pycaw
 - `pywin32` (`win32gui`, `win32process`) — window enumeration to find active audio session title
-- `winrt` (`winrt-windows-media-control`) — available in venv, targeted by the `bpp-winrt_mediainfo` branch as a replacement media-info source
+- `winrt` (`winrt-windows-media-control`) — now-playing metadata via `GlobalSystemMediaTransportControls`
 
 ## Arduino Libraries
 
 Required in the Arduino IDE / library manager:
 
 - `Keypad` (Mark Stanley, Alexander Brevig)
-- `Keyboard` (built-in HID)
+- `HID-Project` (NicoHood) — consumer control HID; provides `Consumer.write(MEDIA_*)` for media keys
 - `Adafruit GFX Library`
 - `Adafruit SSD1306`
+
+**Keypad button layout** (left to right): mute/unmute (`M`), previous track (`R`), play/pause (`P`), next track (`F`) — mapped as HID consumer keys, no Python involvement.
+
+Target board: **Arduino Pro Micro (ATmega32U4, 5V/16MHz)**. In Arduino IDE select *SparkFun Pro Micro 5V/16MHz* or *Arduino Leonardo* (same chip). Upload baud rate is 57600 via avr109 bootloader.
+
+**Upload tip:** The Pro Micro resets its USB after a new sketch starts. If the port disappears after flashing, click Upload in the IDE and double-tap the reset pin the moment "Uploading..." appears — the IDE will catch the 8-second bootloader window on COM7.
 
 Pin assignments: OLED on SDA=2/SCL=3, encoder on CLK=20/DT=21/BTN=19, keypad rows on 14,15 and columns on 10,16.
 

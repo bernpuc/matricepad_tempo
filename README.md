@@ -24,14 +24,17 @@ List any software, hardware, or libraries required to run the project.
 
 **Hardware:**
 
-*   [List specific Arduino board(s) used] (e.g., Arduino Uno, Arduino Mega, ESP32)
-*   [List other necessary hardware components] (e.g., sensors, motors, breadboard, jumper wires)
+*   Arduino Pro Micro (ATmega32U4, **5V/16MHz**)
+*   128×32 SSD1306 OLED display (I2C)
+*   Rotary encoder with push button
+*   2×2 keypad matrix
 
 **Software:**
 
-*   Arduino IDE or other preferred Arduino development environment
-*   Python 3.x
-*   [List any specific Python libraries required] (e.g., `pyserial`, `numpy`, `matplotlib`)
+*   Arduino IDE — board: *SparkFun Pro Micro 5V/16MHz* (or *Arduino Leonardo*)
+*   Arduino libraries: `Keypad`, `HID-Project` (NicoHood), `Adafruit GFX`, `Adafruit SSD1306`
+*   Python 3.10 (required — the `winrt` wheels are built for cp310)
+*   Python libraries: `pyserial`, `pycaw`, `comtypes`, `pywin32`, `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Media.Control`
 
 ### Installation
 
