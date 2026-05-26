@@ -217,6 +217,7 @@ def main(port: str | None):
                 # Get window_title
                 window_title = get_window_title()
                 # Get media_info
+                media_info = None
                 with media_info_lock:
                     if shared_media_info is not None:
                         media_info = shared_media_info.copy()
