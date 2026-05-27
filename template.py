@@ -87,7 +87,7 @@ def get_title_song(input_string):
 
 # --- YouTube / WinRT title parser ---
 
-_QUALIFIER_PATS = [
+_QUALIFIER_PATS = [re.compile(p, re.I) for p in [
     r'\s*\(Official(?:\s+Music)?\s+Video\)',
     r'\s*\[Official(?:\s+(?:Music|HD)\s+)?Video\]',
     r'\s*\(Official(?:\s+Music)?\s+Audio\)',
@@ -102,7 +102,7 @@ _QUALIFIER_PATS = [
     r'\s*\(ft\.[^)]*\)',
     r'\s+ft\.\s+[^()\[\]]+$',
     r'\s*[-–]\s*YouTube(?:\s+Music)?\s*$',
-]
+]]
 
 _NON_MUSIC_PAT = re.compile(
     r'\b(lofi|lo-fi|beats\s+to\s+(relax|chill|study)|playlist|compilation'
@@ -111,7 +111,7 @@ _NON_MUSIC_PAT = re.compile(
 
 def _strip_qualifiers(t):
     for pat in _QUALIFIER_PATS:
-        t = re.sub(pat, '', t, flags=re.I)
+        t = pat.sub('', t)
     return t.strip()
 
 def _is_likely_artist(s):
@@ -164,6 +164,10 @@ def parse_youtube_title(raw_title, winrt_artist):
     return left, right
 
 _BROWSER_PROCS = {"chrome.exe", "firefox.exe", "msedge.exe", "opera.exe"}
+
+_window_title_cache = "No media playing"
+_window_title_next  = 0.0
+_WINDOW_TITLE_INTERVAL = 0.5
 
 def get_audio_playing_window_title():
     """Get window title of the active non-browser audio process, or '' for browsers."""
@@ -239,6 +243,7 @@ async def get_media_info_async():
         return info_dict
 
 def handle_serial_input(ser, volume_i):
+    global _volume_next
     while ser.in_waiting:
         line = ser.readline().decode('utf-8').strip()
 
@@ -247,26 +252,41 @@ def handle_serial_input(ser, volume_i):
                 new_volume = int(line[4:])
                 new_volume = max(0, min(100, new_volume))  # clamp to 0–100
                 volume_i.SetMasterVolumeLevelScalar(new_volume / 100.0, None)
+                _volume_next = 0.0  # force re-read on next cycle
                 debugPrint(f"[Arduino -> PC] Volume set to {new_volume}%")
             except ValueError:
                 print("[Error] Invalid volume format:", line)
         else:
             print(line)
 
+_volume_cache    = 0
+_volume_next     = 0.0
+_VOLUME_INTERVAL = 1.0
+
 def get_audio_settings(volume_i):
-    current_volume = int(volume_i.GetMasterVolumeLevelScalar() * 100)
-    return current_volume
+    global _volume_cache, _volume_next
+    now = time.monotonic()
+    if now >= _volume_next:
+        _volume_cache = int(volume_i.GetMasterVolumeLevelScalar() * 100)
+        _volume_next  = now + _VOLUME_INTERVAL
+    return _volume_cache
 
 def get_window_title():
-    window_title = get_audio_playing_window_title()
-    return window_title
+    global _window_title_cache, _window_title_next
+    now = time.monotonic()
+    if now >= _window_title_next:
+        _window_title_cache = get_audio_playing_window_title()
+        _window_title_next  = now + _WINDOW_TITLE_INTERVAL
+    return _window_title_cache
 
 def get_media_info_loop(stop_event):
     global shared_media_info
     none_count = 0
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     while not stop_event.is_set():
         try:
-            media_info = asyncio.run(get_media_info_async())
+            media_info = loop.run_until_complete(get_media_info_async())
             if media_info is not None:
                 none_count = 0
                 with media_info_lock:
@@ -306,7 +326,8 @@ def send_packet(ser, serial_packet: str):
 
 def main(port: str | None):
     """Main"""
-    global_ser = None
+    global_ser  = None
+    last_packet = ""
 
     # Set up audio device and volume interface
     devices = AudioUtilities.GetSpeakers()
@@ -325,6 +346,7 @@ def main(port: str | None):
                     print("Waiting before next reconnection attempt...")
                     time.sleep(5)  # Wait longer before retrying connection
                     continue # Skip the rest of the loop and try to reconnect again
+                last_packet = ""  # force resend after reconnect
             try:
                 # Check incoming serial
                 handle_serial_input(global_ser, volume_i)
@@ -339,8 +361,10 @@ def main(port: str | None):
                         media_info = shared_media_info.copy()
                 # Assemble serial packet
                 serial_packet = get_serial_packet(window_title, media_info, current_volume)
-                # Send serial packet
-                send_packet(global_ser, serial_packet)
+                # Send serial packet only when content changed
+                if serial_packet != last_packet:
+                    send_packet(global_ser, serial_packet)
+                    last_packet = serial_packet
                 
             except SerialException as e:
                 print(f"Serial communication error: {e}. Attempting to reconnect.")

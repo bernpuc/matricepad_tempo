@@ -5,8 +5,20 @@
 #include <Adafruit_SSD1306.h>
 
 // ── Display layout switch ─────────────────────────────────────────────────────
-// 2 = two-line layout:   song on row 0, artist on row 1 — both scroll when long
-// 3 = three-line layout: song word-wrapped across rows 0-1, artist scrolls row 2
+// Set to 2 or 3 to select the display layout.
+//
+// DISPLAY_LINES 2  (default)
+//   textSize 2 — large text, ~10 chars visible per row.
+//   Row 0: song title   (scrolls when > ~10 chars)
+//   Row 1: artist name  (scrolls when > ~10 chars)
+//   Both rows fill the 32px height exactly (2 × 16px).
+//   Best for quick readability from a distance.
+//
+// DISPLAY_LINES 3
+//   textSize 1 — small text, 21 chars visible per row.
+//   Rows 0–1: song title word-wrapped (static)
+//   Row 2:    artist name (scrolls when > 21 chars)
+//   Better for long titles that would otherwise scroll constantly.
 #define DISPLAY_LINES 2
 
 // ── OLED ──────────────────────────────────────────────────────────────────────
@@ -42,8 +54,10 @@
 #define ENCODER_BTN     19
 
 // ── Globals ───────────────────────────────────────────────────────────────────
-volatile int encoderPosition = 0;
+int encoderPosition = 0;
 int lastEncoderState = LOW;
+unsigned long lastEncoderDebounceTime = 0;
+const unsigned long ENCODER_DEBOUNCE_MS = 10;
 
 String inputBuffer = "";
 int volume = 0;
@@ -296,7 +310,9 @@ void loop() {
 
     // --- Encoder rotation (volume) ---
     int currentStateCLK = digitalRead(ENCODER_PIN_CLK);
-    if (lastEncoderState == HIGH && currentStateCLK == LOW) {
+    if (lastEncoderState == HIGH && currentStateCLK == LOW &&
+            millis() - lastEncoderDebounceTime >= ENCODER_DEBOUNCE_MS) {
+        lastEncoderDebounceTime = millis();
         if (digitalRead(ENCODER_PIN_DT) != currentStateCLK) {
             encoderPosition -= 2;
         } else {
