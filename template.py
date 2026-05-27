@@ -16,8 +16,8 @@ from winrt.windows.media.control import \
 from pycaw.pycaw import AudioUtilities
 from pycaw.constants import AudioSessionState
 from serial.serialutil import SerialException
-import win32gui
-import win32process
+import win32gui  # pylint: disable=no-member
+import win32process  # pylint: disable=no-member
 import re
 import threading
 ARDUINO_VID_PID = [("1B4F", "9206"), ("1B4F", "9205"), ("2341", "8036")]
@@ -163,15 +163,10 @@ def parse_youtube_title(raw_title, winrt_artist):
 
     return left, right
 
+_BROWSER_PROCS = {"chrome.exe", "firefox.exe", "msedge.exe", "opera.exe"}
+
 def get_audio_playing_window_title():
-    """Get name of web browser or song title"""
-    browser_names = {
-        "chrome.exe": "Google Chrome",
-        "firefox.exe": "Mozilla Firefox",
-        "msedge.exe": "Microsoft Edge",
-        "opera.exe": "Opera",
-        # add other browsers if needed
-    }
+    """Get window title of the active non-browser audio process, or '' for browsers."""
 
     sessions = AudioUtilities.GetAllSessions()
     for session in sessions:
@@ -182,34 +177,22 @@ def get_audio_playing_window_title():
                 proc_name = process.name().lower()
 
                 # Browser audio — WinRT is the source for browser content, not window title
-                if proc_name in browser_names:
-                    if DEBUG:
-                        browser_titles = []
-                        def _dbg_enum(hwnd, out):
-                            if win32gui.IsWindowVisible(hwnd):
-                                _, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                                if wpid == pid:
-                                    t = win32gui.GetWindowText(hwnd)
-                                    if t and not t.isspace():
-                                        out.append(t)
-                            return True
-                        win32gui.EnumWindows(_dbg_enum, browser_titles)
-                        debugPrint(f"[browser titles] {browser_titles}")
+                if proc_name in _BROWSER_PROCS:
                     return ""
 
                 # Otherwise, get window titles for the process
                 titles = []
 
-                def enum_handler(hwnd, titles):
-                    if win32gui.IsWindowVisible(hwnd):
-                        _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
+                def enum_handler(hwnd, titles, pid=pid):
+                    if win32gui.IsWindowVisible(hwnd):  # pylint: disable=no-member
+                        _, window_pid = win32process.GetWindowThreadProcessId(hwnd)  # pylint: disable=no-member
                         if window_pid == pid:
-                            title = win32gui.GetWindowText(hwnd)
+                            title = win32gui.GetWindowText(hwnd)  # pylint: disable=no-member
                             if title and not title.isspace():
                                 titles.append(title)
                     return True
 
-                win32gui.EnumWindows(enum_handler, titles)
+                win32gui.EnumWindows(enum_handler, titles)  # pylint: disable=no-member
                 if titles:
                     return max(titles, key=len)
 
@@ -256,7 +239,7 @@ async def get_media_info_async():
         return info_dict
 
 def handle_serial_input(ser, volume_i):
-    if ser.in_waiting: 
+    while ser.in_waiting:
         line = ser.readline().decode('utf-8').strip()
 
         if line.startswith("VOL:"):
@@ -269,7 +252,6 @@ def handle_serial_input(ser, volume_i):
                 print("[Error] Invalid volume format:", line)
         else:
             print(line)
-    return
 
 def get_audio_settings(volume_i):
     current_volume = int(volume_i.GetMasterVolumeLevelScalar() * 100)
@@ -386,5 +368,5 @@ if __name__ == "__main__":
     DEBUG = args.debug
 
     media_info_lock = threading.Lock()
-    shared_media_info = {}
+    shared_media_info = None
     main(find_arduino_port(args.port))
