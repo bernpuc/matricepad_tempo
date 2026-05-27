@@ -34,7 +34,7 @@ def find_arduino_port(override=None):
                 return port.device
     raise RuntimeError("Arduino not found. Plug in the board or use --port to specify.")
 
-DEBUG = False    # Set to True for debugging output
+DEBUG = False
 def debugPrint(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -64,12 +64,11 @@ def establish_serial_connection(port, baud_rate, timeout=1, retries=5, delay_bet
 # But
 # VLC Player is Formatted '<track number> <artist> - <song title> - VLC media player'
 def get_title_song(input_string):
-    """Get song title from various formats"""
-    # List of (regex, group count or a custom parser)
+    """Parse artist/song from local player window titles (Zune, VLC, Media Player)."""
     regex_patterns = [
         (r"^(\d+)\s(.*)\s-\s(.*)\s-\s.*$", lambda m: {'track': m.group(1), 'artist': m.group(2), 'song': m.group(3)}),
         (r"^(\d+)\s(.*)\s-\s(.*)$",        lambda m: {'track': m.group(1), 'artist': m.group(2), 'song': m.group(3)}),
-        (r"^(.*)\s-\s(.*)$",               lambda m: {'artist': m.group(1), 'song': m.group(2)})
+        (r"^(.*)\s-\s(.*)$",               lambda m: {'artist': m.group(1), 'song': m.group(2)}),
     ]
 
     parsed = None
@@ -85,6 +84,84 @@ def get_title_song(input_string):
     else:
         debugPrint("No match found.")
         return "", ""
+
+# --- YouTube / WinRT title parser ---
+
+_QUALIFIER_PATS = [
+    r'\s*\(Official(?:\s+Music)?\s+Video\)',
+    r'\s*\[Official(?:\s+(?:Music|HD)\s+)?Video\]',
+    r'\s*\(Official(?:\s+Music)?\s+Audio\)',
+    r'\s*\(Official\s+Lyric\s+Video\)',
+    r'\s*\(Official\s+Visualizer\)',
+    r'\s*\(Official\)',
+    r'\s*\(Lyric\s+Video\)',
+    r'\s*\[4K[^\]]*\]',
+    r'\s*\[HD\]',
+    r'\s*\(Full\s+Album\)',
+    r'\s*\(feat\.[^)]*\)',
+    r'\s*\(ft\.[^)]*\)',
+    r'\s+ft\.\s+[^()\[\]]+$',
+    r'\s*[-–]\s*YouTube(?:\s+Music)?\s*$',
+]
+
+_NON_MUSIC_PAT = re.compile(
+    r'\b(lofi|lo-fi|beats\s+to\s+(relax|chill|study)|playlist|compilation'
+    r'|mix\b|full\s+album|live\s+stream|24/7|vol\.?\s*\d)\b', re.I
+)
+
+def _strip_qualifiers(t):
+    for pat in _QUALIFIER_PATS:
+        t = re.sub(pat, '', t, flags=re.I)
+    return t.strip()
+
+def _is_likely_artist(s):
+    words = s.split()
+    if re.search(r'\b(&|\+|and|feat\.|ft\.)\b', s, re.I):
+        return True
+    if re.match(r'^The\s+[A-Z]', s) and len(words) <= 4:
+        return True
+    if len(words) == 1 and s.isupper() and len(s) >= 3:
+        return True
+    if len(words) <= 3 and all(w[0].isupper() or not w[0].isalpha() for w in words if w):
+        return True
+    return False
+
+def _is_likely_song_phrase(s):
+    STARTERS = r'^(In\s+The|Somebody|Something|Nothing|Everything|Anyone|Everyone|Never|Always|Sometimes|Forever|Tonight|Yesterday|Tomorrow|Beautiful|Wonderful|Crazy|Falling|Running|Standing|What\s+|How\s+)'
+    if re.match(STARTERS, s, re.I) and len(s.split()) >= 3:
+        return True
+    return len(s.split()) >= 5
+
+def parse_youtube_title(raw_title, winrt_artist):
+    """Parse artist and song from a YouTube WinRT title + artist field.
+    Returns (artist, song)."""
+    if _NON_MUSIC_PAT.search(raw_title):
+        debugPrint(f"[youtube] non-music stream")
+        return winrt_artist, _strip_qualifiers(raw_title)
+
+    t = _strip_qualifiers(raw_title)
+    is_vevo = winrt_artist.upper().endswith('VEVO')
+
+    # Topic channel / YouTube Music: no ' - ' in title, artist field is clean
+    if ' - ' not in t and winrt_artist and not is_vevo:
+        debugPrint(f"[youtube] Topic channel — WinRT fields used directly")
+        return winrt_artist, t
+
+    # No delimiter — fall back to WinRT artist
+    if ' - ' not in t:
+        return winrt_artist, t
+
+    idx = t.index(' - ')
+    left = t[:idx].strip()
+    right = _strip_qualifiers(t[idx + 3:]).strip()
+
+    # Inversion: "Song Title - Artist Name"
+    if not _is_likely_artist(left) and _is_likely_song_phrase(left) and \
+            (len(right.split()) <= 3 or _is_likely_artist(right)):
+        debugPrint(f"[youtube] inverted title")
+        return right, left
+
+    return left, right
 
 def get_audio_playing_window_title():
     """Get name of web browser or song title"""
@@ -104,9 +181,21 @@ def get_audio_playing_window_title():
                 pid = process.pid
                 proc_name = process.name().lower()
 
-                # If it's a browser, return browser name instead of title
+                # Browser audio — WinRT is the source for browser content, not window title
                 if proc_name in browser_names:
-                    return browser_names[proc_name]+" - Web Browser Media"
+                    if DEBUG:
+                        browser_titles = []
+                        def _dbg_enum(hwnd, out):
+                            if win32gui.IsWindowVisible(hwnd):
+                                _, wpid = win32process.GetWindowThreadProcessId(hwnd)
+                                if wpid == pid:
+                                    t = win32gui.GetWindowText(hwnd)
+                                    if t and not t.isspace():
+                                        out.append(t)
+                            return True
+                        win32gui.EnumWindows(_dbg_enum, browser_titles)
+                        debugPrint(f"[browser titles] {browser_titles}")
+                    return ""
 
                 # Otherwise, get window titles for the process
                 titles = []
@@ -132,17 +221,17 @@ async def get_media_info_async():
     current_session = sessions.get_current_session()
     if current_session:  # there needs to be a media session running
         info = await current_session.try_get_media_properties_async()
-        # Additional fields (usually blank for streaming sources)
-        # album_artist
-        # album_title
-        # album_track_count
-        # artist
-        # subtitle
-        # title
-        # track_number
-        # These seemed to be broken (Traceback) genres, thumbnail, playback_type
-
-        info_dict = {"artist": info.artist, "title": info.title}
+        # genres, thumbnail, playback_type raise Traceback — skip them
+        info_dict = {
+            "artist":       info.artist,
+            "album_artist": info.album_artist,
+            "title":        info.title,
+            "album_title":  info.album_title,
+            "track_number": info.track_number,
+        }
+        debugPrint(f"[WinRT raw] title='{info.title}' artist='{info.artist}'"
+                   f" album_artist='{info.album_artist}' album='{info.album_title}'"
+                   f" track={info.track_number}")
         return info_dict
 
 def handle_serial_input(ser, volume_i):
@@ -171,11 +260,21 @@ def get_window_title():
 
 def get_media_info_loop(stop_event):
     global shared_media_info
+    none_count = 0
     while not stop_event.is_set():
         try:
             media_info = asyncio.run(get_media_info_async())
-            with media_info_lock:
-                shared_media_info = media_info
+            if media_info is not None:
+                none_count = 0
+                with media_info_lock:
+                    shared_media_info = media_info
+            else:
+                none_count += 1
+                if none_count >= 3:  # ~9s of no session — real app switch, clear stale data
+                    none_count = 0
+                    with media_info_lock:
+                        shared_media_info = None
+                    debugPrint("[WinRT] session gone — cleared shared_media_info")
         except Exception as e:
             print(f"[Media Info Thread Error] {e}")
         time.sleep(3)
@@ -188,11 +287,11 @@ def get_serial_packet(window_title, media_info, current_volume):
         song, artist = get_title_song(window_title)
         if artist == "": artist = window_title
 
-    # TODO: Determine which has the best data
-    if media_info and len(media_info["artist"]) > 0 and len(media_info["title"]) > 0:
-        artist = media_info["artist"]
-        song = media_info["title"]
-        debugPrint(f"media: {artist} {song}")
+    if media_info and len(media_info["title"]) > 0:
+        winrt_artist = media_info.get("artist", "")
+        artist, song = parse_youtube_title(media_info["title"], winrt_artist)
+        debugPrint(f"[parse] title='{media_info['title']}' winrt_artist='{winrt_artist}'"
+                   f" → artist='{artist}' song='{song}'")
 
     serial_output = f"{song.strip()}||{artist.strip()}||{current_volume}\n"
     debugPrint(serial_output)
@@ -261,7 +360,9 @@ def main(port: str | None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="A script that runs forever.")
     parser.add_argument("--port", type=str, help="COM port (auto-detected if omitted)", default=None)
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
     args = parser.parse_args()
+    DEBUG = args.debug
 
     media_info_lock = threading.Lock()
     shared_media_info = {}
