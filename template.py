@@ -211,7 +211,7 @@ def get_audio_playing_window_title():
 
                 win32gui.EnumWindows(enum_handler, titles)
                 if titles:
-                    return titles[0]
+                    return max(titles, key=len)
 
     return "No media playing"
 
@@ -228,14 +228,17 @@ async def get_media_info_async():
     for s in all_sessions:
         try:
             pb = s.get_playback_info()
-            if pb and pb.playback_status == _PLAYBACK_STATUS_PLAYING:
+            status = pb.playback_status if pb else -1
+            debugPrint(f"[WinRT session] {s.source_app_user_model_id}  status={status}")
+            if status == _PLAYBACK_STATUS_PLAYING:
                 chosen = s
-                debugPrint(f"[WinRT] active session: {s.source_app_user_model_id}")
                 break
-        except Exception:
-            pass
+        except Exception as e:
+            debugPrint(f"[WinRT session] error: {e}")
     if chosen is None:
-        chosen = sessions.get_current_session()
+        cs = sessions.get_current_session()
+        debugPrint(f"[WinRT] no Playing session found; current={cs.source_app_user_model_id if cs else 'none'}")
+        chosen = cs
 
     if chosen:
         info = await chosen.try_get_media_properties_async()
