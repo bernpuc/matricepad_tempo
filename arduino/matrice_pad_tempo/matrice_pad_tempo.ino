@@ -24,13 +24,11 @@
   // textSize 2: 16px tall chars — two rows fill 32px exactly
   #define ROW0_Y       0
   #define ROW1_Y      16
-  #define MUTE_ICON_Y ROW1_Y
   #define CHAR_WIDTH_PX 12   // 10px glyph + 2px spacing at textSize 2
 #else
   #define ROW0_Y       0
   #define ROW1_Y      10
   #define ROW2_Y      20
-  #define MUTE_ICON_Y ROW2_Y
   #define CHAR_WIDTH_PX  6   //  5px glyph + 1px spacing at textSize 1
 #endif
 
@@ -80,9 +78,24 @@ LineScroll scroll[1];   // [0] = artist line only
 #endif
 
 // ── Mute icon ─────────────────────────────────────────────────────────────────
-// 8×8 bitmap: speaker body (cols 0-2), gap (col 3), X marker (cols 4-7)
-static const uint8_t PROGMEM muteIcon[] = {
-    0x00, 0x20, 0x69, 0xE6, 0xE6, 0x69, 0x20, 0x00
+// 16×16 bitmap: speaker body left, X marker right, centred on 128×32 display
+static const uint8_t PROGMEM muteIcon16[] = {
+    0x00, 0x00,
+    0x00, 0x00,
+    0x20, 0x00,
+    0x30, 0x00,
+    0x38, 0x00,
+    0xF8, 0x82,
+    0xF8, 0x44,
+    0xF8, 0x28,
+    0xF8, 0x10,
+    0xF8, 0x28,
+    0xF8, 0x44,
+    0xF8, 0x82,
+    0x38, 0x00,
+    0x30, 0x00,
+    0x20, 0x00,
+    0x00, 0x00,
 };
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -98,6 +111,7 @@ byte colPins[COLS] = {10, 16};
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
 int lastButtonState = HIGH;
+int lastRawButton   = HIGH;
 unsigned long lastDebounceTime = 0;
 const int debounceDelay = 50;
 
@@ -139,10 +153,9 @@ bool tickScroll(LineScroll &s, int contentPx) {
 }
 
 // ── Drawing ───────────────────────────────────────────────────────────────────
-void drawMuteIcon() {
-    if (isMuted) {
-        display.drawBitmap(120, MUTE_ICON_Y, muteIcon, 8, 8, SSD1306_WHITE);
-    }
+void applyMuteContrast() {
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(isMuted ? 40 : 255);
 }
 
 void drawMediaDisplay() {
@@ -165,7 +178,9 @@ void drawMediaDisplay() {
     display.println(artist);
 #endif
 
-    drawMuteIcon();
+    if (isMuted) {
+        display.drawBitmap(56, 8, muteIcon16, 16, 16, SSD1306_WHITE);
+    }
     display.display();
 }
 
@@ -259,12 +274,14 @@ void loop() {
 
     // --- Encoder button (mute) ---
     int reading = digitalRead(ENCODER_BTN);
-    if (reading != lastButtonState) {
+    if (reading != lastRawButton) {
         lastDebounceTime = millis();
+        lastRawButton = reading;
     }
     if ((millis() - lastDebounceTime) > debounceDelay) {
         if (reading == LOW && lastButtonState == HIGH) {
             isMuted = !isMuted;
+            applyMuteContrast();
             Serial.println("MUTE");
 
             display.clearDisplay();
@@ -276,8 +293,8 @@ void loop() {
             muteDisplayed    = true;
             muteDisplayStart = millis();
         }
+        lastButtonState = reading;
     }
-    lastButtonState = reading;
 
     if (muteDisplayed && (millis() - muteDisplayStart > 1000)) {
         muteDisplayed = false;
@@ -345,7 +362,18 @@ void loop() {
             Key k = customKeypad.key[i];
             if (k.kstate == PRESSED) {
                 switch (k.kchar) {
-                    case 'M': isMuted = !isMuted; Consumer.write(MEDIA_VOLUME_MUTE); break;
+                    case 'M':
+                        isMuted = !isMuted;
+                        applyMuteContrast();
+                        Consumer.write(MEDIA_VOLUME_MUTE);
+                        display.clearDisplay();
+                        display.setTextSize(3);
+                        display.setCursor(10, 4);
+                        display.println(isMuted ? "MUTE" : "UNMUTE");
+                        display.display();
+                        muteDisplayed    = true;
+                        muteDisplayStart = millis();
+                        break;
                     case 'R': Consumer.write(MEDIA_PREVIOUS);   break;
                     case 'P': Consumer.write(MEDIA_PLAY_PAUSE); break;
                     case 'F': Consumer.write(MEDIA_NEXT);       break;
