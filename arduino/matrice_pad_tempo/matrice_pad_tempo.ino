@@ -68,7 +68,7 @@ bool isMuted = false;
 struct LineScroll {
     int           pixel;
     unsigned long lastTime;
-    uint8_t       phase;   // 0 = pause at start  1 = scrolling  2 = pause at end
+    int8_t        dir;   // 0 = paused, +1 = scrolling forward, -1 = scrolling backward
 };
 
 #if DISPLAY_LINES == 2
@@ -118,7 +118,7 @@ const int debounceDelay = 50;
 // ── Scroll helpers ────────────────────────────────────────────────────────────
 void resetScroll(LineScroll &s) {
     s.pixel    = 0;
-    s.phase    = 0;
+    s.dir      = 0;
     s.lastTime = millis();
 }
 
@@ -127,25 +127,18 @@ bool tickScroll(LineScroll &s, int contentPx) {
     if (contentPx <= SCREEN_WIDTH) return false;
     int maxPx = contentPx - SCREEN_WIDTH;
     unsigned long now = millis();
-    if (s.phase == 0) {
+
+    if (s.dir == 0) {
         if (now - s.lastTime >= SCROLL_PAUSE_MS) {
-            s.phase    = 1;
+            s.dir      = (s.pixel == 0) ? 1 : -1;
             s.lastTime = now;
-        }
-    } else if (s.phase == 1) {
-        if (now - s.lastTime >= SCROLL_STEP_MS) {
-            s.lastTime = now;
-            if (++s.pixel >= maxPx) {
-                s.pixel = maxPx;
-                s.phase = 2;
-            }
-            return true;
         }
     } else {
-        if (now - s.lastTime >= SCROLL_PAUSE_MS) {
-            s.pixel    = 0;
-            s.phase    = 0;
+        if (now - s.lastTime >= SCROLL_STEP_MS) {
             s.lastTime = now;
+            s.pixel   += s.dir;
+            if (s.pixel >= maxPx) { s.pixel = maxPx; s.dir = 0; }
+            else if (s.pixel <= 0) { s.pixel = 0;    s.dir = 0; }
             return true;
         }
     }
@@ -200,7 +193,7 @@ void setup() {
     lastEncoderState = digitalRead(ENCODER_PIN_CLK);
 
     for (int i = 0; i < (int)(sizeof(scroll) / sizeof(scroll[0])); i++) {
-        scroll[i] = {0, 0, 0};
+        scroll[i] = {0, 0, 0};   // pixel=0, lastTime=0, dir=0
     }
 
     if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
