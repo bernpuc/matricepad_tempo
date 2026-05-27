@@ -27,8 +27,10 @@ The venv is at `.venv310/` (Python 3.10 — required for winrt cp310 wheels). Ac
 
 ```powershell
 .\.venv310\Scripts\Activate.ps1
-python template.py --port COM6
+python template.py
 ```
+
+COM port is auto-detected by USB VID:PID. Pass `--port COMx` to override. Pass `--debug` for verbose output.
 
 ## Python Dependencies
 
@@ -57,6 +59,18 @@ Target board: **Arduino Pro Micro (ATmega32U4, 5V/16MHz)**. In Arduino IDE selec
 
 Pin assignments: OLED on SDA=2/SCL=3, encoder on CLK=20/DT=21/BTN=19, keypad rows on 14,15 and columns on 10,16.
 
-## Active Branch Context
+**Display layout:** `#define DISPLAY_LINES` in the sketch selects between two layouts:
+- `2` (default) — textSize 2, song on row 0 / artist on row 1, both scroll when long
+- `3` — textSize 1, song word-wrapped across rows 0–1 (static), artist scrolls on row 2
 
-Branch `bpp-winrt_mediainfo` is investigating replacing the `pycaw`+`win32gui` approach with the WinRT `GlobalSystemMediaTransportControls` API for richer, more reliable now-playing metadata. The WinRT packages are already installed in the venv.
+## Media Source Priority (`template.py`)
+
+Three mutually exclusive cases, checked each loop iteration:
+
+| `get_audio_playing_window_title()` returns | Source used |
+|---|---|
+| `""` | Browser is active → use WinRT (`GlobalSystemMediaTransportControls`) |
+| `"No media playing"` | Nothing active → send blank song/artist |
+| any other string | Non-browser app (StreamPlayer, Zune, VLC) → parse window title |
+
+WinRT runs in a background thread (3s poll, persistent event loop). Window title and volume are polled from the main loop with caching (1s and 2s respectively). Serial packets are only written on content change or every 2.5s keepalive; the Arduino connection timeout is 5s.
