@@ -326,8 +326,9 @@ def send_packet(ser, serial_packet: str):
 
 def main(port: str | None):
     """Main"""
-    global_ser  = None
-    last_packet = ""
+    global_ser       = None
+    last_packet      = ""
+    last_send_time   = 0.0
 
     # Set up audio device and volume interface
     devices = AudioUtilities.GetSpeakers()
@@ -346,7 +347,8 @@ def main(port: str | None):
                     print("Waiting before next reconnection attempt...")
                     time.sleep(5)  # Wait longer before retrying connection
                     continue # Skip the rest of the loop and try to reconnect again
-                last_packet = ""  # force resend after reconnect
+                last_packet    = ""   # force resend after reconnect
+                last_send_time = 0.0
             try:
                 # Check incoming serial
                 handle_serial_input(global_ser, volume_i)
@@ -361,10 +363,12 @@ def main(port: str | None):
                         media_info = shared_media_info.copy()
                 # Assemble serial packet
                 serial_packet = get_serial_packet(window_title, media_info, current_volume)
-                # Send serial packet only when content changed
-                if serial_packet != last_packet:
+                # Send when content changed or keepalive interval elapsed (Arduino timeout = 2.5s)
+                now = time.monotonic()
+                if serial_packet != last_packet or now - last_send_time >= 1.5:
                     send_packet(global_ser, serial_packet)
-                    last_packet = serial_packet
+                    last_packet    = serial_packet
+                    last_send_time = now
                 
             except SerialException as e:
                 print(f"Serial communication error: {e}. Attempting to reconnect.")
