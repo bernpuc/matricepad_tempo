@@ -85,8 +85,6 @@ while True:
         else:
             artist, song = title, ""
 
-        artist = "[ " + artist + " ]"
-
         # Send formatted info to Arduino
         serial_output = f"{song.strip()}||{artist.strip()}||{current_volume}\n"
         ser.write(serial_output.encode('utf-8'))

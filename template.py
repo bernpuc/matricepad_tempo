@@ -194,7 +194,6 @@ def get_serial_packet(window_title, media_info, current_volume):
         song = media_info["title"]
         debugPrint(f"media: {artist} {song}")
 
-    artist = "[ " + artist + " ]"
     serial_output = f"{song.strip()}||{artist.strip()}||{current_volume}\n"
     debugPrint(serial_output)
     return serial_output

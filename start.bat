@@ -1,4 +1,5 @@
 @echo off
-call "%~dp0.venv310\Scripts\activate.bat"
-python "%~dp0template.py" %*
+set PROJECT=C:\local\source\MatricePadTempo
+call "%PROJECT%\.venv310\Scripts\activate.bat"
+python "%PROJECT%\template.py" %*
 deactivate
