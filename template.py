@@ -305,16 +305,18 @@ def get_media_info_loop(stop_event):
 def get_serial_packet(window_title, media_info, current_volume):
     song = ""
     artist = ""
-    if len(window_title) > 0:
+    if window_title == "":
+        # Browser is the active audio source — use WinRT metadata
+        if media_info and len(media_info["title"]) > 0:
+            winrt_artist = media_info.get("artist", "")
+            artist, song = parse_youtube_title(media_info["title"], winrt_artist)
+            debugPrint(f"[parse] title='{media_info['title']}' winrt_artist='{winrt_artist}'"
+                       f" → artist='{artist}' song='{song}'")
+    elif window_title != "No media playing":
+        # Non-browser app is playing — use its window title
         debugPrint(f"window: {window_title}")
         song, artist = get_title_song(window_title)
         if artist == "": artist = window_title
-
-    if media_info and len(media_info["title"]) > 0:
-        winrt_artist = media_info.get("artist", "")
-        artist, song = parse_youtube_title(media_info["title"], winrt_artist)
-        debugPrint(f"[parse] title='{media_info['title']}' winrt_artist='{winrt_artist}'"
-                   f" → artist='{artist}' song='{song}'")
 
     serial_output = f"{song.strip()}||{artist.strip()}||{current_volume}\n"
     debugPrint(serial_output)
