@@ -1,0 +1,10 @@
+comtypes==1.4.16
+psutil==7.2.2
+pycaw==20251023
+pyserial==3.5
+pywin32==311
+typing_extensions==4.15.0
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Media.Control==3.2.1
