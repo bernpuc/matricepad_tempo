@@ -63,7 +63,7 @@ String inputBuffer = "";
 int volume = 0;
 
 unsigned long lastUpdateTime = 0;
-const unsigned long TIMEOUT = 2500;
+const unsigned long TIMEOUT = 5000;
 bool connected = false;
 
 bool volumeBeingAdjusted = false;

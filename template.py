@@ -167,7 +167,7 @@ _BROWSER_PROCS = {"chrome.exe", "firefox.exe", "msedge.exe", "opera.exe"}
 
 _window_title_cache = "No media playing"
 _window_title_next  = 0.0
-_WINDOW_TITLE_INTERVAL = 0.5
+_WINDOW_TITLE_INTERVAL = 1.0
 
 def get_audio_playing_window_title():
     """Get window title of the active non-browser audio process, or '' for browsers."""
@@ -261,7 +261,7 @@ def handle_serial_input(ser, volume_i):
 
 _volume_cache    = 0
 _volume_next     = 0.0
-_VOLUME_INTERVAL = 1.0
+_VOLUME_INTERVAL = 2.0
 
 def get_audio_settings(volume_i):
     global _volume_cache, _volume_next
@@ -365,9 +365,9 @@ def main(port: str | None):
                         media_info = shared_media_info.copy()
                 # Assemble serial packet
                 serial_packet = get_serial_packet(window_title, media_info, current_volume)
-                # Send when content changed or keepalive interval elapsed (Arduino timeout = 2.5s)
+                # Send when content changed or keepalive interval elapsed (Arduino timeout = 5s)
                 now = time.monotonic()
-                if serial_packet != last_packet or now - last_send_time >= 1.5:
+                if serial_packet != last_packet or now - last_send_time >= 2.5:
                     send_packet(global_ser, serial_packet)
                     last_packet    = serial_packet
                     last_send_time = now
@@ -384,7 +384,7 @@ def main(port: str | None):
                 # Consider if this error also warrants closing the serial port
                 # For now, it will likely be caught by the next SerialException if it affects serial comms
 
-            time.sleep(0.1)
+            time.sleep(0.2)
         
     except KeyboardInterrupt:
         debugPrint("\nShutting down gracefully.")
