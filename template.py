@@ -215,12 +215,30 @@ def get_audio_playing_window_title():
 
     return "No media playing"
 
+_PLAYBACK_STATUS_PLAYING = 4   # GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing
+
 async def get_media_info_async():
     sessions = await MediaManager.request_async()       # Sometimes this never returns
 
-    current_session = sessions.get_current_session()
-    if current_session:  # there needs to be a media session running
-        info = await current_session.try_get_media_properties_async()
+    # Prefer a session that is actively playing over whatever Windows calls "current".
+    # get_current_session() returns the last-focused session, which can be a stale
+    # browser session even when another app is actively playing.
+    chosen = None
+    all_sessions = sessions.get_sessions()
+    for s in all_sessions:
+        try:
+            pb = s.get_playback_info()
+            if pb and pb.playback_status == _PLAYBACK_STATUS_PLAYING:
+                chosen = s
+                debugPrint(f"[WinRT] active session: {s.source_app_user_model_id}")
+                break
+        except Exception:
+            pass
+    if chosen is None:
+        chosen = sessions.get_current_session()
+
+    if chosen:
+        info = await chosen.try_get_media_properties_async()
         # genres, thumbnail, playback_type raise Traceback — skip them
         info_dict = {
             "artist":       info.artist,
