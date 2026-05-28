@@ -20,6 +20,14 @@ import win32gui  # pylint: disable=no-member
 import win32process  # pylint: disable=no-member
 import re
 import threading
+import unicodedata
+
+_UNICODE_REPLACEMENTS = str.maketrans({
+    '‘': "'", '’': "'", '‚': "'", '‛': "'",  # single quotes
+    '“': '"', '”': '"', '„': '"', '‟': '"',  # double quotes
+    '–': '-', '—': '-', '―': '-',                 # dashes
+    '…': '...', '•': '*', '·': '.',               # ellipsis, bullets
+})
 ARDUINO_VID_PID = [("1B4F", "9206"), ("1B4F", "9205"), ("2341", "8036")]
 
 def find_arduino_port(override=None):
@@ -302,6 +310,11 @@ def get_media_info_loop(stop_event):
             print(f"[Media Info Thread Error] {e}")
         time.sleep(3)
 
+def to_ascii(text: str) -> str:
+    text = text.translate(_UNICODE_REPLACEMENTS)
+    text = unicodedata.normalize('NFKD', text)
+    return text.encode('ascii', errors='ignore').decode('ascii')
+
 def get_serial_packet(window_title, media_info, current_volume):
     song = ""
     artist = ""
@@ -318,12 +331,12 @@ def get_serial_packet(window_title, media_info, current_volume):
         song, artist = get_title_song(window_title)
         if artist == "": artist = window_title
 
-    serial_output = f"{song.strip()}||{artist.strip()}||{current_volume}\n"
+    serial_output = f"{to_ascii(song.strip())}||{to_ascii(artist.strip())}||{current_volume}\n"
     debugPrint(serial_output)
     return serial_output
 
 def send_packet(ser, serial_packet: str):
-    ser.write(serial_packet.encode('utf-8'))
+    ser.write(serial_packet.encode('ascii'))
     return
 
 def main(port: str | None):
