@@ -210,7 +210,8 @@ def get_audio_playing_window_title():
 
     return "No media playing"
 
-_PLAYBACK_STATUS_PLAYING = 4   # GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing
+_PLAYBACK_STATUS_PLAYING = 4   # GlobalSystemMediaTransportControlsSessionPlaybackStatus
+_PLAYBACK_STATUS_PAUSED  = 5
 
 async def get_media_info_async():
     sessions = await MediaManager.request_async()       # Sometimes this never returns
@@ -236,18 +237,21 @@ async def get_media_info_async():
         chosen = cs
 
     if chosen:
+        pb = chosen.get_playback_info()
+        chosen_status = pb.playback_status if pb else -1
         info = await chosen.try_get_media_properties_async()
         # genres, thumbnail, playback_type raise Traceback — skip them
         info_dict = {
-            "artist":       info.artist,
-            "album_artist": info.album_artist,
-            "title":        info.title,
-            "album_title":  info.album_title,
-            "track_number": info.track_number,
+            "artist":          info.artist,
+            "album_artist":    info.album_artist,
+            "title":           info.title,
+            "album_title":     info.album_title,
+            "track_number":    info.track_number,
+            "playback_status": chosen_status,
         }
         debugPrint(f"[WinRT raw] title='{info.title}' artist='{info.artist}'"
                    f" album_artist='{info.album_artist}' album='{info.album_title}'"
-                   f" track={info.track_number}")
+                   f" track={info.track_number} status={chosen_status}")
         return info_dict
 
 def handle_serial_input(ser, volume_i):
@@ -288,7 +292,7 @@ def get_window_title():
     return _window_title_cache
 
 def get_media_info_loop(stop_event):
-    global shared_media_info
+    global shared_media_info, last_playing_media_info
     none_count = 0
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -299,13 +303,17 @@ def get_media_info_loop(stop_event):
                 none_count = 0
                 with media_info_lock:
                     shared_media_info = media_info
+                    if media_info.get("playback_status") == _PLAYBACK_STATUS_PLAYING:
+                        last_playing_media_info = media_info
+                        debugPrint(f"[WinRT] updated last_playing: '{media_info['title']}'")
             else:
                 none_count += 1
                 if none_count >= 3:  # ~9s of no session — real app switch, clear stale data
                     none_count = 0
                     with media_info_lock:
                         shared_media_info = None
-                    debugPrint("[WinRT] session gone — cleared shared_media_info")
+                        last_playing_media_info = None
+                    debugPrint("[WinRT] session gone — cleared shared/last_playing media_info")
         except Exception as e:
             print(f"[Media Info Thread Error] {e}")
         time.sleep(3)
@@ -315,7 +323,7 @@ def to_ascii(text: str) -> str:
     text = unicodedata.normalize('NFKD', text)
     return text.encode('ascii', errors='ignore').decode('ascii')
 
-def get_serial_packet(window_title, media_info, current_volume):
+def get_serial_packet(window_title, media_info, last_playing, current_volume):
     song = ""
     artist = ""
     if window_title == "":
@@ -325,7 +333,14 @@ def get_serial_packet(window_title, media_info, current_volume):
             artist, song = parse_youtube_title(media_info["title"], winrt_artist)
             debugPrint(f"[parse] title='{media_info['title']}' winrt_artist='{winrt_artist}'"
                        f" → artist='{artist}' song='{song}'")
-    elif window_title != "No media playing":
+    elif window_title == "No media playing":
+        # No active audio session — show the most recently playing track if available
+        if last_playing and last_playing["title"]:
+            winrt_artist = last_playing.get("artist", "")
+            artist, song = parse_youtube_title(last_playing["title"], winrt_artist)
+            debugPrint(f"[paused] title='{last_playing['title']}' winrt_artist='{winrt_artist}'"
+                       f" → artist='{artist}' song='{song}'")
+    else:
         # Non-browser app is playing — use its window title
         debugPrint(f"window: {window_title}")
         song, artist = get_title_song(window_title)
@@ -373,11 +388,14 @@ def main(port: str | None):
                 window_title = get_window_title()
                 # Get media_info
                 media_info = None
+                last_playing = None
                 with media_info_lock:
                     if shared_media_info is not None:
                         media_info = shared_media_info.copy()
+                    if last_playing_media_info is not None:
+                        last_playing = last_playing_media_info.copy()
                 # Assemble serial packet
-                serial_packet = get_serial_packet(window_title, media_info, current_volume)
+                serial_packet = get_serial_packet(window_title, media_info, last_playing, current_volume)
                 # Send when content changed or keepalive interval elapsed (Arduino timeout = 5s)
                 now = time.monotonic()
                 if serial_packet != last_packet or now - last_send_time >= 2.5:
@@ -412,4 +430,5 @@ if __name__ == "__main__":
 
     media_info_lock = threading.Lock()
     shared_media_info = None
+    last_playing_media_info = None
     main(find_arduino_port(args.port))
