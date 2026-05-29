@@ -254,22 +254,11 @@ async def get_media_info_async():
                    f" track={info.track_number} status={chosen_status}")
         return info_dict
 
-def handle_serial_input(ser, volume_i):
-    global _volume_next
+def handle_serial_input(ser):
     while ser.in_waiting:
         line = ser.readline().decode('utf-8').strip()
-
-        if line.startswith("VOL:"):
-            try:
-                new_volume = int(line[4:])
-                new_volume = max(0, min(100, new_volume))  # clamp to 0–100
-                volume_i.SetMasterVolumeLevelScalar(new_volume / 100.0, None)
-                _volume_next = 0.0  # force re-read on next cycle
-                debugPrint(f"[Arduino -> PC] Volume set to {new_volume}%")
-            except ValueError:
-                print("[Error] Invalid volume format:", line)
-        else:
-            print(line)
+        if line:
+            print(f"[Arduino] {line}")
 
 _volume_cache    = 0
 _volume_next     = 0.0
@@ -381,7 +370,7 @@ def main(port: str | None):
                 last_send_time = 0.0
             try:
                 # Check incoming serial
-                handle_serial_input(global_ser, volume_i)
+                handle_serial_input(global_ser)
                 # Get audio settings
                 current_volume = get_audio_settings(volume_i)
                 # Get window_title

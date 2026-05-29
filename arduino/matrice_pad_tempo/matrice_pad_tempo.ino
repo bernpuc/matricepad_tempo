@@ -54,7 +54,6 @@
 #define ENCODER_BTN     19
 
 // ── Globals ───────────────────────────────────────────────────────────────────
-int encoderPosition = 0;
 int lastEncoderState = LOW;
 unsigned long lastEncoderDebounceTime = 0;
 const unsigned long ENCODER_DEBOUNCE_MS = 10;
@@ -75,7 +74,6 @@ String line1  = "";
 String line2  = "";   // used in 3-line mode only
 String artist = "";
 
-bool volumeInitialized = false;
 bool isMuted = false;
 
 // ── Scroll state ──────────────────────────────────────────────────────────────
@@ -239,11 +237,6 @@ void loop() {
                 String newArtist = inputBuffer.substring(firstSep + 2, secondSep);
                 volume = inputBuffer.substring(secondSep + 2).toInt();
 
-                if (!volumeInitialized) {
-                    encoderPosition   = volume;
-                    volumeInitialized = true;
-                }
-
                 songTitle.trim();
 
 #if DISPLAY_LINES == 2
@@ -289,7 +282,7 @@ void loop() {
         if (reading == LOW && lastButtonState == HIGH) {
             isMuted = !isMuted;
             applyMuteContrast();
-            Serial.println("MUTE");
+            Consumer.write(MEDIA_VOLUME_MUTE);
 
             display.clearDisplay();
             display.setTextSize(3);
@@ -314,20 +307,16 @@ void loop() {
             millis() - lastEncoderDebounceTime >= ENCODER_DEBOUNCE_MS) {
         lastEncoderDebounceTime = millis();
         if (digitalRead(ENCODER_PIN_DT) != currentStateCLK) {
-            encoderPosition -= 2;
+            Consumer.write(MEDIA_VOLUME_DOWN);
         } else {
-            encoderPosition += 2;
+            Consumer.write(MEDIA_VOLUME_UP);
         }
-        encoderPosition = constrain(encoderPosition, 0, 100);
-
-        Serial.print("VOL:");
-        Serial.println(encoderPosition);
 
         display.clearDisplay();
         display.setTextSize(2);
         display.setCursor(10, 8);
         display.print("Vol: ");
-        display.print(encoderPosition);
+        display.print(volume);
         display.print("%");
         display.display();
 
