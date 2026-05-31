@@ -172,6 +172,7 @@ def parse_youtube_title(raw_title, winrt_artist):
     return left, right
 
 _BROWSER_PROCS = {"chrome.exe", "firefox.exe", "msedge.exe", "opera.exe"}
+_NOISE_TITLES  = {"libvlcsharp.wpf", "libvlcsharp", "vlcsharp"}
 
 _window_title_cache = "No media playing"
 _window_title_next  = 0.0
@@ -200,7 +201,7 @@ def get_audio_playing_window_title():
                         _, window_pid = win32process.GetWindowThreadProcessId(hwnd)  # pylint: disable=no-member
                         if window_pid == pid:
                             title = win32gui.GetWindowText(hwnd)  # pylint: disable=no-member
-                            if title and not title.isspace():
+                            if title and not title.isspace() and title.lower() not in _NOISE_TITLES:
                                 titles.append(title)
                     return True
 
@@ -261,16 +262,18 @@ def handle_serial_input(ser):
             print(f"[Arduino] {line}")
 
 _volume_cache    = 0
+_mute_cache      = False
 _volume_next     = 0.0
 _VOLUME_INTERVAL = 2.0
 
 def get_audio_settings(volume_i):
-    global _volume_cache, _volume_next
+    global _volume_cache, _mute_cache, _volume_next
     now = time.monotonic()
     if now >= _volume_next:
         _volume_cache = int(volume_i.GetMasterVolumeLevelScalar() * 100)
+        _mute_cache   = bool(volume_i.GetMute())
         _volume_next  = now + _VOLUME_INTERVAL
-    return _volume_cache
+    return _volume_cache, _mute_cache
 
 def get_window_title():
     global _window_title_cache, _window_title_next
@@ -312,7 +315,7 @@ def to_ascii(text: str) -> str:
     text = unicodedata.normalize('NFKD', text)
     return text.encode('ascii', errors='ignore').decode('ascii')
 
-def get_serial_packet(window_title, media_info, last_playing, current_volume):
+def get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted):
     song = ""
     artist = ""
     if window_title == "":
@@ -335,7 +338,7 @@ def get_serial_packet(window_title, media_info, last_playing, current_volume):
         song, artist = get_title_song(window_title)
         if artist == "": artist = window_title
 
-    serial_output = f"{to_ascii(song.strip())}||{to_ascii(artist.strip())}||{current_volume}\n"
+    serial_output = f"{to_ascii(song.strip())}||{to_ascii(artist.strip())}||{current_volume}||{1 if is_muted else 0}\n"
     debugPrint(serial_output)
     return serial_output
 
@@ -372,7 +375,7 @@ def main(port: str | None):
                 # Check incoming serial
                 handle_serial_input(global_ser)
                 # Get audio settings
-                current_volume = get_audio_settings(volume_i)
+                current_volume, is_muted = get_audio_settings(volume_i)
                 # Get window_title
                 window_title = get_window_title()
                 # Get media_info
@@ -384,7 +387,7 @@ def main(port: str | None):
                     if last_playing_media_info is not None:
                         last_playing = last_playing_media_info.copy()
                 # Assemble serial packet
-                serial_packet = get_serial_packet(window_title, media_info, last_playing, current_volume)
+                serial_packet = get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted)
                 # Send when content changed or keepalive interval elapsed (Arduino timeout = 5s)
                 now = time.monotonic()
                 if serial_packet != last_packet or now - last_send_time >= 2.5:

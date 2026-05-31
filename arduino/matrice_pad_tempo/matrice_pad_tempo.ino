@@ -231,11 +231,17 @@ void loop() {
         if (c == '\n') {
             int firstSep  = inputBuffer.indexOf("||");
             int secondSep = inputBuffer.indexOf("||", firstSep + 2);
+            int thirdSep  = inputBuffer.indexOf("||", secondSep + 2);
 
-            if (firstSep != -1 && secondSep != -1) {
+            if (firstSep != -1 && secondSep != -1 && thirdSep != -1) {
                 String songTitle = inputBuffer.substring(0, firstSep);
                 String newArtist = inputBuffer.substring(firstSep + 2, secondSep);
-                volume = inputBuffer.substring(secondSep + 2).toInt();
+                volume = inputBuffer.substring(secondSep + 2, thirdSep).toInt();
+                bool newMuted = inputBuffer.substring(thirdSep + 2).toInt() != 0;
+                if (newMuted != isMuted) {
+                    isMuted = newMuted;
+                    applyMuteContrast();
+                }
 
                 songTitle.trim();
 
