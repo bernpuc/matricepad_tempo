@@ -1,0 +1,232 @@
+# Software Specification: Panel Firmware
+## Matrice Pad Sound Panel — ATmega32U4
+
+**Version:** 1.0
+
+---
+
+## 1. Overview
+
+The Panel firmware runs on an ATmega32U4 (SparkFun Pro Micro, 5V/16MHz). It drives a 128×32 OLED display, reads a rotary encoder and a 2×2 keypad, sends HID consumer control events to the host, and receives now-playing data from the Windows Service over USB serial.
+
+The firmware has no connectivity dependency — all HID controls function regardless of whether the Windows Service is running.
+
+---
+
+## 2. Hardware Pin Map
+
+| Signal | Pin |
+|---|---|
+| OLED SDA | 2 |
+| OLED SCL | 3 |
+| Encoder CLK | 20 |
+| Encoder DT | 21 |
+| Encoder Button | 19 |
+| Keypad Row 0 | 14 |
+| Keypad Row 1 | 15 |
+| Keypad Col 0 | 10 |
+| Keypad Col 1 | 16 |
+
+---
+
+## 3. Libraries
+
+| Library | Purpose |
+|---|---|
+| Adafruit SSD1306 | OLED driver |
+| Adafruit GFX | Text and bitmap rendering |
+| HID-Project (NicoHood) | HID consumer control interface |
+| Keypad (Mark Stanley) | 2×2 matrix key scanning |
+
+---
+
+## 4. Configuration Constants
+
+| Constant | Default | Description |
+|---|---|---|
+| `DISPLAY_LINES` | `2` | Layout mode. `2` = two large rows, `3` = three small rows |
+| `SCROLL_PAUSE_MS` | `2000` | Milliseconds to pause at each scroll end |
+| `SCROLL_STEP_MS` | `40` | Milliseconds between scroll pixel steps |
+| `TIMEOUT` | `5000` | Milliseconds before connection-lost screen |
+| `MAX_SERIAL_BUFFER` | `256` | Maximum serial input buffer size in bytes |
+| `ENCODER_DEBOUNCE_MS` | `10` | Encoder debounce window in milliseconds |
+| `debounceDelay` | `50` | Button debounce window in milliseconds |
+
+---
+
+## 5. State and Global Variables
+
+| Variable | Type | Description |
+|---|---|---|
+| `isMuted` | `bool` | Current mute state, synced from Windows Service |
+| `volume` | `int` | Last volume value received from Windows Service (0–100) |
+| `connected` | `bool` | True when serial data has been received within TIMEOUT |
+| `line1` | `String` | Track title (2-line mode), or title line 1 (3-line mode) |
+| `line2` | `String` | Title line 2 (3-line mode only) |
+| `artist` | `String` | Artist name |
+| `volumeBeingAdjusted` | `bool` | True while volume overlay is visible |
+| `lastEncoderAdjustTime` | `unsigned long` | Timestamp of last encoder turn, for overlay timeout |
+| `muteDisplayed` | `bool` | True while mute/unmute overlay is visible |
+| `muteDisplayStart` | `unsigned long` | Timestamp of mute overlay start |
+| `inputBuffer` | `String` | Accumulates serial characters until `\n` |
+| `lastEncoderState` | `int` | Previous CLK pin state for edge detection |
+| `lastEncoderDebounceTime` | `unsigned long` | Last encoder edge timestamp |
+| `lastButtonState` | `int` | Debounced encoder button state |
+| `lastRawButton` | `int` | Raw encoder button state for debounce logic |
+| `lastDebounceTime` | `unsigned long` | Last encoder button edge timestamp |
+| `lastUpdateTime` | `unsigned long` | Timestamp of last valid serial packet |
+
+---
+
+## 6. Display Layouts
+
+### 6.1 Two-Line Mode (`DISPLAY_LINES == 2`)
+
+- textSize 2 (16px tall characters, ~12px wide)
+- Row 0 at Y=0: track title, scrolls horizontally
+- Row 1 at Y=16: artist, scrolls horizontally
+- `CHAR_WIDTH_PX = 12`
+
+### 6.2 Three-Line Mode (`DISPLAY_LINES == 3`)
+
+- textSize 1 (8px tall characters, 6px wide)
+- Row 0 at Y=0: title word-wrapped line 1, static
+- Row 1 at Y=10: title word-wrapped line 2, static
+- Row 2 at Y=20: artist, scrolls horizontally
+- `CHAR_WIDTH_PX = 6`
+- Word-wrap algorithm: find the last space at or before character position `DISPLAY_CHARS_PER_LINE` (21). If no space found, hard-truncate with `...` at position 18.
+
+---
+
+## 7. Scroll State Machine
+
+Each scrolling line has a `LineScroll` struct: `{ int pixel, unsigned long lastTime, int8_t dir }`.
+
+- `dir == 0`: paused. After `SCROLL_PAUSE_MS` elapses, advance to scrolling.
+  - If `pixel == 0`: set `dir = +1` (scroll forward)
+  - If `pixel == maxPx`: set `dir = -1` (scroll backward)
+- `dir != 0`: scrolling. After `SCROLL_STEP_MS` elapses, increment `pixel` by `dir`.
+  - Clamp to `[0, maxPx]` and set `dir = 0` when either end is reached.
+- `maxPx = (content length in pixels) - SCREEN_WIDTH`
+- No scrolling if content fits within screen width (maxPx ≤ 0).
+
+In 2-line mode: `scroll[0]` = title, `scroll[1]` = artist.
+In 3-line mode: `scroll[0]` = artist only.
+
+`resetScroll()` sets `pixel = 0`, `dir = 0`, `lastTime = millis()`.
+
+---
+
+## 8. Serial Protocol — Receive
+
+Format: `song||artist||volume||muted\n` (ASCII, newline-terminated)
+
+Parsing on receipt of `\n`:
+1. Find `firstSep` = index of first `||`
+2. Find `secondSep` = index of second `||` (search from `firstSep + 2`)
+3. Find `thirdSep` = index of third `||` (search from `secondSep + 2`)
+4. Reject packet if any separator is missing
+5. Extract:
+   - `songTitle` = `inputBuffer[0 .. firstSep)`
+   - `newArtist` = `inputBuffer[firstSep+2 .. secondSep)`
+   - `volume` = `inputBuffer[secondSep+2 .. thirdSep)` as int
+   - `newMuted` = `inputBuffer[thirdSep+2 ..]` as int, non-zero = true
+6. Trim `songTitle`
+7. Update display strings: if `songTitle != line1`, set `line1 = songTitle` and `resetScroll(scroll[0])`; same for artist
+8. Update mute state: if `newMuted != isMuted`, set `isMuted = newMuted` and call `applyMuteContrast()`
+9. Set `connected = true`, `lastUpdateTime = millis()`
+10. Trigger `drawMediaDisplay()` if neither `volumeBeingAdjusted` nor `muteDisplayed`
+
+Buffer management: append each received character to `inputBuffer` up to `MAX_SERIAL_BUFFER`. Clear buffer on each `\n`.
+
+---
+
+## 9. HID Output
+
+All HID events use the HID-Project `Consumer` interface.
+
+| Trigger | HID Event |
+|---|---|
+| Encoder turn clockwise | `MEDIA_VOLUME_UP` |
+| Encoder turn counter-clockwise | `MEDIA_VOLUME_DOWN` |
+| Encoder button press | `MEDIA_VOLUME_MUTE` |
+| Keypad M | `MEDIA_VOLUME_MUTE` |
+| Keypad R | `MEDIA_PREVIOUS` |
+| Keypad P | `MEDIA_PLAY_PAUSE` |
+| Keypad F | `MEDIA_NEXT` |
+
+---
+
+## 10. Encoder Handling
+
+Edge detection on CLK pin (falling edge = HIGH→LOW transition).
+
+On falling edge (with debounce `ENCODER_DEBOUNCE_MS`):
+- Read DT pin
+- If DT ≠ CLK state: counter-clockwise → `Consumer.write(MEDIA_VOLUME_DOWN)`
+- If DT = CLK state: clockwise → `Consumer.write(MEDIA_VOLUME_UP)`
+- Draw volume overlay: `Vol: XX%` using `volume` (last value from serial)
+- Set `volumeBeingAdjusted = true`, `lastEncoderAdjustTime = millis()`
+
+Volume overlay clears after 1000ms of no encoder activity.
+
+---
+
+## 11. Encoder Button Handling
+
+Debounce using `debounceDelay` (50ms). On confirmed press (LOW edge):
+- Toggle `isMuted`
+- Call `applyMuteContrast()`
+- Send `Consumer.write(MEDIA_VOLUME_MUTE)`
+- Draw mute overlay: `MUTE` or `UNMUTE`, textSize 3
+- Set `muteDisplayed = true`, `muteDisplayStart = millis()`
+
+Mute overlay clears after 1000ms.
+
+---
+
+## 12. Mute Contrast
+
+`applyMuteContrast()` sends an SSD1306 contrast command directly:
+- Muted: contrast = 10
+- Unmuted: contrast = 255
+
+---
+
+## 13. Mute Icon
+
+A 16×16 PROGMEM bitmap (speaker body with X) is drawn at position (56, 8) on the now-playing screen whenever `isMuted == true`.
+
+---
+
+## 14. Connection Timeout
+
+If `millis() - lastUpdateTime > TIMEOUT` and `connected == true`:
+- Set `connected = false`
+- Display: `No connection` (row 0) / `Awaiting update...` (row 1), textSize 1
+
+---
+
+## 15. Setup Sequence
+
+1. `delay(2000)` — allow USB enumeration to settle
+2. `Serial.begin(115200)`
+3. `Consumer.begin()`
+4. Configure encoder and button pins as `INPUT_PULLUP`
+5. Initialize scroll state array to zeros
+6. Initialize OLED; halt if `display.begin()` fails
+7. Display "Waiting for data..." message
+8. Set `lastUpdateTime = millis()`
+
+---
+
+## 16. Main Loop Order
+
+Each iteration of `loop()`:
+1. Process serial input (read all available bytes)
+2. Encoder button debounce and press detection
+3. Clear mute overlay if 1000ms elapsed
+4. Encoder rotation detection
+5. Clear volume overlay if 1000ms of no encoder activity
+6. Scroll tick (only when `connected`, not adjusting volume, not in mute overlay)
+7. Connection timeout check
