@@ -74,13 +74,17 @@ When the keypad mute key is pressed, the display shows `MUTE` or `UNMUTE` (textS
 
 **5.1.5 Mute Icon**
 
-A 16×16 speaker-with-X bitmap is overlaid on the now-playing screen whenever the system is muted.
+When the system is muted, a 32×32 status icon is drawn centred on the display (x=64, y=16). It consists of a solid white filled circle with a speaker body and X mark drawn in black. The white fill covers any scrolling text within the icon boundary.
 
-**5.1.6 Connection Lost Screen**
+**5.1.6 Pause Icon**
+
+When playback is paused (and the system is not muted), the same 32×32 centred circle is drawn with a solid black right-pointing triangle (▶) inside — the standard "press to play" indicator. Mute takes precedence: if both muted and paused, only the mute icon is shown.
+
+**5.1.7 Connection Lost Screen**
 
 If no serial data is received from the Windows Service for 5 seconds, the display shows a "No connection / Awaiting update..." message.
 
-**5.1.7 Waiting Screen**
+**5.1.8 Waiting Screen**
 
 On boot, the display shows "Waiting for data..." until the first valid serial packet is received.
 
@@ -166,7 +170,7 @@ Messages are newline-terminated (`\n`), ASCII only.
 **PC → Panel**
 
 ```
-song||artist||volume||muted||appvolume\n
+song||artist||volume||muted||appvolume||paused\n
 ```
 
 | Field | Type | Notes |
@@ -176,6 +180,7 @@ song||artist||volume||muted||appvolume\n
 | volume | integer | 0–100, system master volume |
 | muted | integer | 0 = unmuted, 1 = muted |
 | appvolume | integer | 0–100, active application volume; 0 if no active session |
+| paused | integer | 0 = playing or unknown, 1 = paused |
 
 Sent on every content change, or as a keepalive every 2.5 seconds to prevent the Panel's 5-second connection timeout.
 

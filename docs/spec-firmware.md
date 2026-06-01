@@ -59,6 +59,7 @@ The firmware has no connectivity dependency — all HID controls function regard
 | Variable | Type | Description |
 |---|---|---|
 | `isMuted` | `bool` | Current mute state, synced from Windows Service |
+| `isPaused` | `bool` | Current pause state, synced from Windows Service |
 | `volume` | `int` | Last system volume received from Windows Service (0–100) |
 | `appVolume` | `int` | Last active application volume received from Windows Service (0–100) |
 | `currentMode` | `VolumeMode` | Encoder mode: `SYSTEM_VOL` or `APP_VOL`; defaults to `SYSTEM_VOL` on boot |
@@ -123,25 +124,27 @@ In 3-line mode: `scroll[0]` = artist only.
 
 ## 8. Serial Protocol — Receive
 
-Format: `song||artist||volume||muted||appvolume\n` (ASCII, newline-terminated)
+Format: `song||artist||volume||muted||appvolume||paused\n` (ASCII, newline-terminated)
 
 Parsing on receipt of `\n`:
 1. Find `firstSep` = index of first `||`
 2. Find `secondSep` = index of second `||` (search from `firstSep + 2`)
 3. Find `thirdSep` = index of third `||` (search from `secondSep + 2`)
 4. Find `fourthSep` = index of fourth `||` (search from `thirdSep + 2`)
-5. Reject packet if any separator is missing
-6. Extract:
+5. Find `fifthSep` = index of fifth `||` (search from `fourthSep + 2`)
+6. Reject packet if any separator is missing
+7. Extract:
    - `songTitle` = `inputBuffer[0 .. firstSep)`
    - `newArtist` = `inputBuffer[firstSep+2 .. secondSep)`
    - `volume` = `inputBuffer[secondSep+2 .. thirdSep)` as int
    - `newMuted` = `inputBuffer[thirdSep+2 .. fourthSep)` as int, non-zero = true
-   - `appVolume` = `inputBuffer[fourthSep+2 ..]` as int
-7. Trim `songTitle`
-8. Update display strings: if `songTitle != line1`, set `line1 = songTitle` and `resetScroll(scroll[0])`; same for artist
-9. Update mute state: if `newMuted != isMuted`, set `isMuted = newMuted` and call `applyMuteContrast()`
-10. Set `connected = true`, `lastUpdateTime = millis()`
-11. Trigger `drawMediaDisplay()` if neither `volumeBeingAdjusted` nor `muteDisplayed`
+   - `appVolume` = `inputBuffer[fourthSep+2 .. fifthSep)` as int
+   - `isPaused` = `inputBuffer[fifthSep+2 ..]` as int, non-zero = true
+8. Trim `songTitle`
+9. Update display strings: if `songTitle != line1`, set `line1 = songTitle` and `resetScroll(scroll[0])`; same for artist
+10. Update mute state: if `newMuted != isMuted`, set `isMuted = newMuted` and call `applyMuteContrast()`
+11. Set `connected = true`, `lastUpdateTime = millis()`
+12. Trigger `drawMediaDisplay()` if neither `volumeBeingAdjusted` nor `muteDisplayed`
 
 Buffer management: append each received character to `inputBuffer` up to `MAX_SERIAL_BUFFER`. Clear buffer on each `\n`.
 
@@ -203,9 +206,21 @@ Mode overlay clears after 1000ms.
 
 ---
 
-## 13. Mute Icon
+## 13. Status Icons
 
-A 16×16 PROGMEM bitmap (speaker body with X) is drawn at position (56, 8) on the now-playing screen whenever `isMuted == true`.
+Two icons share the same position and drawing function `drawCircleIcon(bool isMute)`. Both are 32×32, drawn centred on the display (circle centre x=64, y=16, radius=15).
+
+**Rendering approach:** `drawMediaDisplay()` draws text first, then calls `drawCircleIcon` on top. `fillCircle` with `SSD1306_WHITE` paints a solid white disc that covers any scrolling text within the icon boundary. The symbol is then drawn in `SSD1306_BLACK` inside the disc.
+
+**Mute icon** (`isMute == true`, shown when `isMuted == true`):
+- Speaker body: `fillRect(50, 13, 5, 7)` — solid rectangle at left of disc
+- Speaker horn: two `fillTriangle` calls forming the flared cone to the right of the body
+- X mark: four `drawLine` calls (two pairs of parallel diagonals) for visible thickness
+
+**Pause icon** (`isMute == false`, shown when `isPaused == true` and `isMuted == false`):
+- Solid right-pointing triangle: `fillTriangle(56, 9, 56, 23, 73, 16)` — standard play/resume indicator
+
+**Priority:** `isMuted` takes precedence. If both `isMuted` and `isPaused` are true, only the mute icon is shown.
 
 ---
 

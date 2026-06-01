@@ -111,10 +111,10 @@ record AudioState(int Volume, bool IsMuted, int AppVolume);
 ### `SerialPacket`
 
 ```csharp
-record SerialPacket(string Song, string Artist, int Volume, bool IsMuted, int AppVolume)
+record SerialPacket(string Song, string Artist, int Volume, bool IsMuted, int AppVolume, bool Paused)
 {
     public string Encode() =>
-        $"{Song}||{Artist}||{Volume}||{(IsMuted ? 1 : 0)}||{AppVolume}\n";
+        $"{Song}||{Artist}||{Volume}||{(IsMuted ? 1 : 0)}||{AppVolume}||{(Paused ? 1 : 0)}\n";
 }
 ```
 
@@ -265,6 +265,7 @@ Runs every `MainLoopIntervalMs` (200ms):
    - If `MediaInfo` is null: `song = ""`, `artist = ""`
    - Otherwise: apply title parser per source selection, apply ASCII sanitization
    - Always populate `Volume`, `IsMuted`, `AppVolume` from `AudioState`
+   - Derive `Paused`: `true` when the browser source reports `PlaybackStatus.Paused`, or when the no-active-session case is falling back to `_lastPlaying` (paused persistence); `false` for actively playing or window-title sources
 4. If packet content differs from last sent, or `KeepaliveIntervalMs` has elapsed: call `ISerialManager.Send(packet.Encode())`
 5. Update last-sent packet and timestamp
 
