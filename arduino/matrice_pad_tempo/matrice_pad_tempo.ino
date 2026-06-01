@@ -75,7 +75,8 @@ String line1  = "";
 String line2  = "";   // used in 3-line mode only
 String artist = "";
 
-bool isMuted = false;
+bool isMuted  = false;
+bool isPaused = false;
 
 enum VolumeMode { SYSTEM_VOL, APP_VOL };
 VolumeMode currentMode = SYSTEM_VOL;
@@ -93,26 +94,6 @@ LineScroll scroll[2];   // [0] = song line   [1] = artist line
 LineScroll scroll[1];   // [0] = artist line only
 #endif
 
-// ── Mute icon ─────────────────────────────────────────────────────────────────
-// 16×16 bitmap: speaker body left, X marker right, centred on 128×32 display
-static const uint8_t PROGMEM muteIcon16[] = {
-    0x00, 0x00,
-    0x00, 0x00,
-    0x20, 0x00,
-    0x30, 0x00,
-    0x38, 0x00,
-    0xF8, 0x82,
-    0xF8, 0x44,
-    0xF8, 0x28,
-    0xF8, 0x10,
-    0xF8, 0x28,
-    0xF8, 0x44,
-    0xF8, 0x82,
-    0x38, 0x00,
-    0x30, 0x00,
-    0x20, 0x00,
-    0x00, 0x00,
-};
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -162,6 +143,25 @@ bool tickScroll(LineScroll &s, int contentPx) {
 }
 
 // ── Drawing ───────────────────────────────────────────────────────────────────
+void drawCircleIcon(bool isMute) {
+    display.fillCircle(64, 16, 15, SSD1306_WHITE);
+    if (isMute) {
+        // Speaker body
+        display.fillRect(50, 13, 5, 7, SSD1306_BLACK);
+        // Speaker cone (horn)
+        display.fillTriangle(54, 13, 54, 20, 62, 24, SSD1306_BLACK);
+        display.fillTriangle(54, 13, 62,  8, 62, 24, SSD1306_BLACK);
+        // X mark (two thick diagonal lines each)
+        display.drawLine(65, 12, 72, 20, SSD1306_BLACK);
+        display.drawLine(66, 12, 73, 20, SSD1306_BLACK);
+        display.drawLine(65, 20, 72, 12, SSD1306_BLACK);
+        display.drawLine(66, 20, 73, 12, SSD1306_BLACK);
+    } else {
+        // Paused: solid right-pointing play arrow
+        display.fillTriangle(56, 9, 56, 23, 73, 16, SSD1306_BLACK);
+    }
+}
+
 void applyMuteContrast() {
     display.ssd1306_command(SSD1306_SETCONTRAST);
     display.ssd1306_command(isMuted ? 10 : 255);
@@ -188,7 +188,9 @@ void drawMediaDisplay() {
 #endif
 
     if (isMuted) {
-        display.drawBitmap(56, 8, muteIcon16, 16, 16, SSD1306_WHITE);
+        drawCircleIcon(true);
+    } else if (isPaused) {
+        drawCircleIcon(false);
     }
     display.display();
 }
@@ -237,13 +239,15 @@ void loop() {
             int secondSep = inputBuffer.indexOf("||", firstSep + 2);
             int thirdSep  = inputBuffer.indexOf("||", secondSep + 2);
             int fourthSep = inputBuffer.indexOf("||", thirdSep + 2);
+            int fifthSep  = inputBuffer.indexOf("||", fourthSep + 2);
 
-            if (firstSep != -1 && secondSep != -1 && thirdSep != -1 && fourthSep != -1) {
+            if (firstSep != -1 && secondSep != -1 && thirdSep != -1 && fourthSep != -1 && fifthSep != -1) {
                 String songTitle = inputBuffer.substring(0, firstSep);
                 String newArtist = inputBuffer.substring(firstSep + 2, secondSep);
                 volume    = inputBuffer.substring(secondSep + 2, thirdSep).toInt();
                 bool newMuted = inputBuffer.substring(thirdSep + 2, fourthSep).toInt() != 0;
-                appVolume = inputBuffer.substring(fourthSep + 2).toInt();
+                appVolume = inputBuffer.substring(fourthSep + 2, fifthSep).toInt();
+                isPaused  = inputBuffer.substring(fifthSep + 2).toInt() != 0;
                 if (newMuted != isMuted) {
                     isMuted = newMuted;
                     applyMuteContrast();

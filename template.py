@@ -348,6 +348,7 @@ def to_ascii(text: str) -> str:
 def get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted, app_volume):
     song = ""
     artist = ""
+    paused = 0
     if window_title == "":
         # Browser is the active audio source — use WinRT metadata
         if media_info and len(media_info["title"]) > 0:
@@ -355,6 +356,8 @@ def get_serial_packet(window_title, media_info, last_playing, current_volume, is
             artist, song = parse_youtube_title(media_info["title"], winrt_artist)
             debugPrint(f"[parse] title='{media_info['title']}' winrt_artist='{winrt_artist}'"
                        f" → artist='{artist}' song='{song}'")
+        if media_info and media_info.get("playback_status") == _PLAYBACK_STATUS_PAUSED:
+            paused = 1
     elif window_title == "No media playing":
         # No active audio session — show the most recently playing track if available
         if last_playing and last_playing["title"]:
@@ -362,13 +365,14 @@ def get_serial_packet(window_title, media_info, last_playing, current_volume, is
             artist, song = parse_youtube_title(last_playing["title"], winrt_artist)
             debugPrint(f"[paused] title='{last_playing['title']}' winrt_artist='{winrt_artist}'"
                        f" → artist='{artist}' song='{song}'")
+            paused = 1
     else:
         # Non-browser app is playing — use its window title
         debugPrint(f"window: {window_title}")
         song, artist = get_title_song(window_title)
         if artist == "": artist = window_title
 
-    serial_output = f"{to_ascii(song.strip())}||{to_ascii(artist.strip())}||{current_volume}||{1 if is_muted else 0}||{app_volume}\n"
+    serial_output = f"{to_ascii(song.strip())}||{to_ascii(artist.strip())}||{current_volume}||{1 if is_muted else 0}||{app_volume}||{paused}\n"
     debugPrint(serial_output)
     return serial_output
 
