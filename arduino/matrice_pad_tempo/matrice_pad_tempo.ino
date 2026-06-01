@@ -158,7 +158,7 @@ void drawCircleIcon(bool isMute) {
         display.drawLine(66, 20, 73, 12, SSD1306_BLACK);
     } else {
         // Paused: solid right-pointing play arrow
-        display.fillTriangle(56, 9, 56, 23, 73, 16, SSD1306_BLACK);
+        display.fillTriangle(76, 16, 58, 6, 58, 26, SSD1306_BLACK);
     }
 }
 

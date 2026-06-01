@@ -218,7 +218,7 @@ Two icons share the same position and drawing function `drawCircleIcon(bool isMu
 - X mark: four `drawLine` calls (two pairs of parallel diagonals) for visible thickness
 
 **Pause icon** (`isMute == false`, shown when `isPaused == true` and `isMuted == false`):
-- Solid right-pointing triangle: `fillTriangle(56, 9, 56, 23, 73, 16)` — standard play/resume indicator
+- Equilateral triangle pointing right, inset ~3 px from circle edge: `fillTriangle(76, 16, 58, 6, 58, 26)` — inscribed radius 12 (circle radius 15)
 
 **Priority:** `isMuted` takes precedence. If both `isMuted` and `isPaused` are true, only the mute icon is shown.
 
