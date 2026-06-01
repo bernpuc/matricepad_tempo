@@ -59,7 +59,8 @@ unsigned long lastEncoderDebounceTime = 0;
 const unsigned long ENCODER_DEBOUNCE_MS = 10;
 
 String inputBuffer = "";
-int volume = 0;
+int volume    = 0;
+int appVolume = 0;
 
 unsigned long lastUpdateTime = 0;
 const unsigned long TIMEOUT = 5000;
@@ -75,6 +76,9 @@ String line2  = "";   // used in 3-line mode only
 String artist = "";
 
 bool isMuted = false;
+
+enum VolumeMode { SYSTEM_VOL, APP_VOL };
+VolumeMode currentMode = SYSTEM_VOL;
 
 // ── Scroll state ──────────────────────────────────────────────────────────────
 struct LineScroll {
@@ -232,12 +236,14 @@ void loop() {
             int firstSep  = inputBuffer.indexOf("||");
             int secondSep = inputBuffer.indexOf("||", firstSep + 2);
             int thirdSep  = inputBuffer.indexOf("||", secondSep + 2);
+            int fourthSep = inputBuffer.indexOf("||", thirdSep + 2);
 
-            if (firstSep != -1 && secondSep != -1 && thirdSep != -1) {
+            if (firstSep != -1 && secondSep != -1 && thirdSep != -1 && fourthSep != -1) {
                 String songTitle = inputBuffer.substring(0, firstSep);
                 String newArtist = inputBuffer.substring(firstSep + 2, secondSep);
-                volume = inputBuffer.substring(secondSep + 2, thirdSep).toInt();
-                bool newMuted = inputBuffer.substring(thirdSep + 2).toInt() != 0;
+                volume    = inputBuffer.substring(secondSep + 2, thirdSep).toInt();
+                bool newMuted = inputBuffer.substring(thirdSep + 2, fourthSep).toInt() != 0;
+                appVolume = inputBuffer.substring(fourthSep + 2).toInt();
                 if (newMuted != isMuted) {
                     isMuted = newMuted;
                     applyMuteContrast();
@@ -278,7 +284,7 @@ void loop() {
         }
     }
 
-    // --- Encoder button (mute) ---
+    // --- Encoder button (mode toggle: SYSTEM <-> APP volume) ---
     int reading = digitalRead(ENCODER_BTN);
     if (reading != lastRawButton) {
         lastDebounceTime = millis();
@@ -286,14 +292,12 @@ void loop() {
     }
     if ((millis() - lastDebounceTime) > debounceDelay) {
         if (reading == LOW && lastButtonState == HIGH) {
-            isMuted = !isMuted;
-            applyMuteContrast();
-            Consumer.write(MEDIA_VOLUME_MUTE);
+            currentMode = (currentMode == SYSTEM_VOL) ? APP_VOL : SYSTEM_VOL;
 
             display.clearDisplay();
-            display.setTextSize(3);
-            display.setCursor(10, 4);
-            display.println(isMuted ? "MUTE" : "UNMUTE");
+            display.setTextSize(2);
+            display.setCursor(4, 8);
+            display.println(currentMode == SYSTEM_VOL ? "SYS VOL" : "APP VOL");
             display.display();
 
             muteDisplayed    = true;
@@ -312,17 +316,19 @@ void loop() {
     if (lastEncoderState == HIGH && currentStateCLK == LOW &&
             millis() - lastEncoderDebounceTime >= ENCODER_DEBOUNCE_MS) {
         lastEncoderDebounceTime = millis();
-        if (digitalRead(ENCODER_PIN_DT) != currentStateCLK) {
-            Consumer.write(MEDIA_VOLUME_DOWN);
+        bool clockwise = digitalRead(ENCODER_PIN_DT) == currentStateCLK;
+
+        if (currentMode == SYSTEM_VOL) {
+            Consumer.write(clockwise ? MEDIA_VOLUME_UP : MEDIA_VOLUME_DOWN);
         } else {
-            Consumer.write(MEDIA_VOLUME_UP);
+            Serial.println(clockwise ? "APPVOL:+" : "APPVOL:-");
         }
 
         display.clearDisplay();
         display.setTextSize(2);
         display.setCursor(10, 8);
-        display.print("Vol: ");
-        display.print(volume);
+        display.print(currentMode == SYSTEM_VOL ? "Vol: " : "App: ");
+        display.print(currentMode == SYSTEM_VOL ? volume : appVolume);
         display.print("%");
         display.display();
 

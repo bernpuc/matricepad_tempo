@@ -256,15 +256,45 @@ async def get_media_info_async():
         return info_dict
 
 def handle_serial_input(ser):
+    global _app_volume_next
     while ser.in_waiting:
         line = ser.readline().decode('utf-8').strip()
-        if line:
+        if not line:
+            continue
+        if line in ("APPVOL:+", "APPVOL:-"):
+            session = get_active_audio_session()
+            if session:
+                step = 0.02
+                current = session.SimpleAudioVolume.GetMasterVolume()
+                new_vol = max(0.0, min(1.0, current + (step if line == "APPVOL:+" else -step)))
+                session.SimpleAudioVolume.SetMasterVolume(new_vol, None)
+                _app_volume_next = 0.0  # force cache refresh on next poll
+                debugPrint(f"[Arduino -> PC] App volume set to {int(new_vol * 100)}%")
+        else:
             print(f"[Arduino] {line}")
 
 _volume_cache    = 0
 _mute_cache      = False
+_app_volume_cache = 0
 _volume_next     = 0.0
+_app_volume_next = 0.0
 _VOLUME_INTERVAL = 2.0
+
+def get_active_audio_session():
+    """Returns the pycaw session for the active audio process, or None."""
+    for session in AudioUtilities.GetAllSessions():
+        if session.State == AudioSessionState.Active and session.Process:
+            return session
+    return None
+
+def get_app_volume():
+    global _app_volume_cache, _app_volume_next
+    now = time.monotonic()
+    if now >= _app_volume_next:
+        session = get_active_audio_session()
+        _app_volume_cache = int(session.SimpleAudioVolume.GetMasterVolume() * 100) if session else 0
+        _app_volume_next  = now + _VOLUME_INTERVAL
+    return _app_volume_cache
 
 def get_audio_settings(volume_i):
     global _volume_cache, _mute_cache, _volume_next
@@ -273,7 +303,7 @@ def get_audio_settings(volume_i):
         _volume_cache = int(volume_i.GetMasterVolumeLevelScalar() * 100)
         _mute_cache   = bool(volume_i.GetMute())
         _volume_next  = now + _VOLUME_INTERVAL
-    return _volume_cache, _mute_cache
+    return _volume_cache, _mute_cache, get_app_volume()
 
 def get_window_title():
     global _window_title_cache, _window_title_next
@@ -315,7 +345,7 @@ def to_ascii(text: str) -> str:
     text = unicodedata.normalize('NFKD', text)
     return text.encode('ascii', errors='ignore').decode('ascii')
 
-def get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted):
+def get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted, app_volume):
     song = ""
     artist = ""
     if window_title == "":
@@ -338,7 +368,7 @@ def get_serial_packet(window_title, media_info, last_playing, current_volume, is
         song, artist = get_title_song(window_title)
         if artist == "": artist = window_title
 
-    serial_output = f"{to_ascii(song.strip())}||{to_ascii(artist.strip())}||{current_volume}||{1 if is_muted else 0}\n"
+    serial_output = f"{to_ascii(song.strip())}||{to_ascii(artist.strip())}||{current_volume}||{1 if is_muted else 0}||{app_volume}\n"
     debugPrint(serial_output)
     return serial_output
 
@@ -375,7 +405,7 @@ def main(port: str | None):
                 # Check incoming serial
                 handle_serial_input(global_ser)
                 # Get audio settings
-                current_volume, is_muted = get_audio_settings(volume_i)
+                current_volume, is_muted, app_volume = get_audio_settings(volume_i)
                 # Get window_title
                 window_title = get_window_title()
                 # Get media_info
@@ -387,7 +417,7 @@ def main(port: str | None):
                     if last_playing_media_info is not None:
                         last_playing = last_playing_media_info.copy()
                 # Assemble serial packet
-                serial_packet = get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted)
+                serial_packet = get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted, app_volume)
                 # Send when content changed or keepalive interval elapsed (Arduino timeout = 5s)
                 now = time.monotonic()
                 if serial_packet != last_packet or now - last_send_time >= 2.5:
