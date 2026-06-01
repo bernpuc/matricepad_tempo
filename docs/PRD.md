@@ -1,7 +1,7 @@
 # Product Requirements Document
 ## Matrice Pad Sound Panel
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Status:** Draft
 
 ---
@@ -29,7 +29,7 @@ The system has two components that communicate over USB serial at 115200 baud.
 | Panel Firmware | ATmega32U4 (Arduino Pro Micro) | Drives display, reads controls, sends HID events |
 | Windows Service | Windows 10/11 | Polls audio state, sends display data to Panel |
 
-The Panel is the HID authority for volume and mute commands — it sends keystrokes directly to Windows via the HID consumer control interface. The Windows Service is the data authority for media metadata, system volume level, and mute state — it pushes this to the Panel over serial.
+The Panel is the HID authority for system volume and mute commands — it sends keystrokes directly to Windows via the HID consumer control interface. The Windows Service is the data authority for media metadata, system volume level, mute state, and active application volume — it pushes this to the Panel over serial. When the Panel is in app volume mode, it sends serial commands to the Windows Service, which adjusts the active audio session volume directly.
 
 ---
 
@@ -60,21 +60,27 @@ Scrolling behavior: text pauses 2 seconds at each end, then scrolls at 40ms per 
 
 **5.1.2 Volume Overlay**
 
-When the rotary encoder is turned, the display temporarily shows `Vol: XX%` (textSize 2) for 1 second, then returns to the now-playing screen.
+When the rotary encoder is turned, the display temporarily shows a volume overlay for 1 second, then returns to the now-playing screen:
+- System volume mode: `Vol: XX%` where XX is the system master volume
+- App volume mode: `App: XX%` where XX is the active application's volume
 
-**5.1.3 Mute Overlay**
+**5.1.3 Mode Overlay**
 
-When the encoder button or the keypad mute key is pressed, the display shows `MUTE` or `UNMUTE` (textSize 3) for 1 second, then returns to the now-playing screen. The OLED contrast is also reduced when muted to provide a visual indicator on the now-playing screen.
+When the encoder button is pressed, the display shows `SYS VOL` or `APP VOL` (textSize 2) for 1 second to confirm the new mode, then returns to the now-playing screen.
 
-**5.1.4 Mute Icon**
+**5.1.4 Mute Overlay**
+
+When the keypad mute key is pressed, the display shows `MUTE` or `UNMUTE` (textSize 3) for 1 second, then returns to the now-playing screen. The OLED contrast is also reduced when muted to provide a visual indicator on the now-playing screen.
+
+**5.1.5 Mute Icon**
 
 A 16×16 speaker-with-X bitmap is overlaid on the now-playing screen whenever the system is muted.
 
-**5.1.5 Connection Lost Screen**
+**5.1.6 Connection Lost Screen**
 
 If no serial data is received from the Windows Service for 5 seconds, the display shows a "No connection / Awaiting update..." message.
 
-**5.1.6 Waiting Screen**
+**5.1.7 Waiting Screen**
 
 On boot, the display shows "Waiting for data..." until the first valid serial packet is received.
 
@@ -84,11 +90,18 @@ On boot, the display shows "Waiting for data..." until the first valid serial pa
 
 **Rotary Encoder**
 
+The encoder has two operating modes toggled by pressing the button:
+
+| Mode | Turn clockwise | Turn counter-clockwise |
+|---|---|---|
+| System volume (default) | HID MEDIA_VOLUME_UP | HID MEDIA_VOLUME_DOWN |
+| App volume | Serial `APPVOL:+` to Windows Service | Serial `APPVOL:-` to Windows Service |
+
 | Action | Behavior |
 |---|---|
-| Turn clockwise | HID MEDIA_VOLUME_UP (one step per detent) |
-| Turn counter-clockwise | HID MEDIA_VOLUME_DOWN (one step per detent) |
-| Press button | HID MEDIA_VOLUME_MUTE; toggles mute icon and display contrast |
+| Press button | Toggle between system volume mode and app volume mode; show mode overlay |
+
+In system volume mode the encoder operates independently of the Windows Service via HID. In app volume mode the Windows Service is required; the service adjusts the active audio session's volume by ±2% per detent.
 
 **Keypad (2×2)**
 
@@ -99,7 +112,7 @@ On boot, the display shows "Waiting for data..." until the first valid serial pa
 | P | Bottom-left | MEDIA_PLAY_PAUSE |
 | F | Bottom-right | MEDIA_NEXT |
 
-All controls send standard HID consumer control events and function without the Windows Service running.
+Keypad controls always send standard HID consumer control events and function without the Windows Service running.
 
 ---
 
@@ -132,12 +145,15 @@ The Windows Service determines the current track title and artist using a priori
 
 ### 5.4 Windows Service — Audio State
 
-The Windows Service polls the Windows default audio endpoint (speakers) for:
+The Windows Service polls for:
 
-- **Master volume level** (0–100, integer)
-- **Mute state** (boolean)
+- **System master volume level** (0–100, integer) — from the default audio endpoint
+- **System mute state** (boolean) — from the default audio endpoint
+- **Active application volume** (0–100, integer) — from the active audio session's `SimpleAudioVolume`; 0 if no session is active
 
-Both are included in every serial packet sent to the Panel. The Panel uses these to keep its local mute state and volume display in sync with the actual system state on every update.
+All three are included in every serial packet sent to the Panel. The Panel uses system volume and mute to keep its display and contrast in sync. The Panel uses app volume for the `App: XX%` overlay when in app volume mode.
+
+The Windows Service also handles inbound `APPVOL:+` / `APPVOL:-` messages from the Panel, adjusting the active session volume by ±2% per message.
 
 Poll interval: 2 seconds.
 
@@ -150,21 +166,27 @@ Messages are newline-terminated (`\n`), ASCII only.
 **PC → Panel**
 
 ```
-song||artist||volume||muted\n
+song||artist||volume||muted||appvolume\n
 ```
 
 | Field | Type | Notes |
 |---|---|---|
 | song | string | Track title, may be empty |
 | artist | string | Artist name, may be empty |
-| volume | integer | 0–100 |
+| volume | integer | 0–100, system master volume |
 | muted | integer | 0 = unmuted, 1 = muted |
+| appvolume | integer | 0–100, active application volume; 0 if no active session |
 
 Sent on every content change, or as a keepalive every 2.5 seconds to prevent the Panel's 5-second connection timeout.
 
 **Panel → PC**
 
-No operational messages. Any unexpected output from the Panel is logged by the Windows Service.
+| Message | Condition |
+|---|---|
+| `APPVOL:+\n` | Encoder turned clockwise while in app volume mode |
+| `APPVOL:-\n` | Encoder turned counter-clockwise while in app volume mode |
+
+Any other output from the Panel is logged by the Windows Service.
 
 ---
 

@@ -1,7 +1,7 @@
 # Software Specification: Panel Firmware
 ## Matrice Pad Sound Panel — ATmega32U4
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -59,15 +59,17 @@ The firmware has no connectivity dependency — all HID controls function regard
 | Variable | Type | Description |
 |---|---|---|
 | `isMuted` | `bool` | Current mute state, synced from Windows Service |
-| `volume` | `int` | Last volume value received from Windows Service (0–100) |
+| `volume` | `int` | Last system volume received from Windows Service (0–100) |
+| `appVolume` | `int` | Last active application volume received from Windows Service (0–100) |
+| `currentMode` | `VolumeMode` | Encoder mode: `SYSTEM_VOL` or `APP_VOL`; defaults to `SYSTEM_VOL` on boot |
 | `connected` | `bool` | True when serial data has been received within TIMEOUT |
 | `line1` | `String` | Track title (2-line mode), or title line 1 (3-line mode) |
 | `line2` | `String` | Title line 2 (3-line mode only) |
 | `artist` | `String` | Artist name |
 | `volumeBeingAdjusted` | `bool` | True while volume overlay is visible |
 | `lastEncoderAdjustTime` | `unsigned long` | Timestamp of last encoder turn, for overlay timeout |
-| `muteDisplayed` | `bool` | True while mute/unmute overlay is visible |
-| `muteDisplayStart` | `unsigned long` | Timestamp of mute overlay start |
+| `muteDisplayed` | `bool` | True while any transient overlay is visible (mode, mute) |
+| `muteDisplayStart` | `unsigned long` | Timestamp of overlay start |
 | `inputBuffer` | `String` | Accumulates serial characters until `\n` |
 | `lastEncoderState` | `int` | Previous CLK pin state for edge detection |
 | `lastEncoderDebounceTime` | `unsigned long` | Last encoder edge timestamp |
@@ -75,6 +77,8 @@ The firmware has no connectivity dependency — all HID controls function regard
 | `lastRawButton` | `int` | Raw encoder button state for debounce logic |
 | `lastDebounceTime` | `unsigned long` | Last encoder button edge timestamp |
 | `lastUpdateTime` | `unsigned long` | Timestamp of last valid serial packet |
+
+`VolumeMode` is an enum: `SYSTEM_VOL = 0`, `APP_VOL = 1`.
 
 ---
 
@@ -119,23 +123,25 @@ In 3-line mode: `scroll[0]` = artist only.
 
 ## 8. Serial Protocol — Receive
 
-Format: `song||artist||volume||muted\n` (ASCII, newline-terminated)
+Format: `song||artist||volume||muted||appvolume\n` (ASCII, newline-terminated)
 
 Parsing on receipt of `\n`:
 1. Find `firstSep` = index of first `||`
 2. Find `secondSep` = index of second `||` (search from `firstSep + 2`)
 3. Find `thirdSep` = index of third `||` (search from `secondSep + 2`)
-4. Reject packet if any separator is missing
-5. Extract:
+4. Find `fourthSep` = index of fourth `||` (search from `thirdSep + 2`)
+5. Reject packet if any separator is missing
+6. Extract:
    - `songTitle` = `inputBuffer[0 .. firstSep)`
    - `newArtist` = `inputBuffer[firstSep+2 .. secondSep)`
    - `volume` = `inputBuffer[secondSep+2 .. thirdSep)` as int
-   - `newMuted` = `inputBuffer[thirdSep+2 ..]` as int, non-zero = true
-6. Trim `songTitle`
-7. Update display strings: if `songTitle != line1`, set `line1 = songTitle` and `resetScroll(scroll[0])`; same for artist
-8. Update mute state: if `newMuted != isMuted`, set `isMuted = newMuted` and call `applyMuteContrast()`
-9. Set `connected = true`, `lastUpdateTime = millis()`
-10. Trigger `drawMediaDisplay()` if neither `volumeBeingAdjusted` nor `muteDisplayed`
+   - `newMuted` = `inputBuffer[thirdSep+2 .. fourthSep)` as int, non-zero = true
+   - `appVolume` = `inputBuffer[fourthSep+2 ..]` as int
+7. Trim `songTitle`
+8. Update display strings: if `songTitle != line1`, set `line1 = songTitle` and `resetScroll(scroll[0])`; same for artist
+9. Update mute state: if `newMuted != isMuted`, set `isMuted = newMuted` and call `applyMuteContrast()`
+10. Set `connected = true`, `lastUpdateTime = millis()`
+11. Trigger `drawMediaDisplay()` if neither `volumeBeingAdjusted` nor `muteDisplayed`
 
 Buffer management: append each received character to `inputBuffer` up to `MAX_SERIAL_BUFFER`. Clear buffer on each `\n`.
 
@@ -145,15 +151,16 @@ Buffer management: append each received character to `inputBuffer` up to `MAX_SE
 
 All HID events use the HID-Project `Consumer` interface.
 
-| Trigger | HID Event |
-|---|---|
-| Encoder turn clockwise | `MEDIA_VOLUME_UP` |
-| Encoder turn counter-clockwise | `MEDIA_VOLUME_DOWN` |
-| Encoder button press | `MEDIA_VOLUME_MUTE` |
-| Keypad M | `MEDIA_VOLUME_MUTE` |
-| Keypad R | `MEDIA_PREVIOUS` |
-| Keypad P | `MEDIA_PLAY_PAUSE` |
-| Keypad F | `MEDIA_NEXT` |
+| Trigger | Condition | HID Event |
+|---|---|---|
+| Encoder turn clockwise | `currentMode == SYSTEM_VOL` | `MEDIA_VOLUME_UP` |
+| Encoder turn counter-clockwise | `currentMode == SYSTEM_VOL` | `MEDIA_VOLUME_DOWN` |
+| Keypad M | — | `MEDIA_VOLUME_MUTE` |
+| Keypad R | — | `MEDIA_PREVIOUS` |
+| Keypad P | — | `MEDIA_PLAY_PAUSE` |
+| Keypad F | — | `MEDIA_NEXT` |
+
+When `currentMode == APP_VOL`, encoder turns send serial messages instead of HID events (see section 10).
 
 ---
 
@@ -162,10 +169,15 @@ All HID events use the HID-Project `Consumer` interface.
 Edge detection on CLK pin (falling edge = HIGH→LOW transition).
 
 On falling edge (with debounce `ENCODER_DEBOUNCE_MS`):
-- Read DT pin
-- If DT ≠ CLK state: counter-clockwise → `Consumer.write(MEDIA_VOLUME_DOWN)`
-- If DT = CLK state: clockwise → `Consumer.write(MEDIA_VOLUME_UP)`
-- Draw volume overlay: `Vol: XX%` using `volume` (last value from serial)
+- Read DT pin; determine direction (`clockwise = DT == CLK`)
+- **System volume mode** (`currentMode == SYSTEM_VOL`):
+  - Clockwise → `Consumer.write(MEDIA_VOLUME_UP)`
+  - Counter-clockwise → `Consumer.write(MEDIA_VOLUME_DOWN)`
+  - Draw overlay: `Vol: XX%` using `volume`
+- **App volume mode** (`currentMode == APP_VOL`):
+  - Clockwise → `Serial.println("APPVOL:+")`
+  - Counter-clockwise → `Serial.println("APPVOL:-")`
+  - Draw overlay: `App: XX%` using `appVolume`
 - Set `volumeBeingAdjusted = true`, `lastEncoderAdjustTime = millis()`
 
 Volume overlay clears after 1000ms of no encoder activity.
@@ -175,13 +187,11 @@ Volume overlay clears after 1000ms of no encoder activity.
 ## 11. Encoder Button Handling
 
 Debounce using `debounceDelay` (50ms). On confirmed press (LOW edge):
-- Toggle `isMuted`
-- Call `applyMuteContrast()`
-- Send `Consumer.write(MEDIA_VOLUME_MUTE)`
-- Draw mute overlay: `MUTE` or `UNMUTE`, textSize 3
+- Toggle `currentMode`: `SYSTEM_VOL` ↔ `APP_VOL`
+- Draw mode overlay: `SYS VOL` or `APP VOL`, textSize 2, cursor at (4, 8)
 - Set `muteDisplayed = true`, `muteDisplayStart = millis()`
 
-Mute overlay clears after 1000ms.
+Mode overlay clears after 1000ms.
 
 ---
 

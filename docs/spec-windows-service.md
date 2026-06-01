@@ -1,7 +1,7 @@
 # Software Specification: Windows Service
 ## Matrice Pad Sound Panel — .NET 9
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -103,16 +103,18 @@ enum PlaybackStatus { Unknown = -1, Playing = 4, Paused = 5 }
 ### `AudioState`
 
 ```csharp
-record AudioState(int Volume, bool IsMuted);
+record AudioState(int Volume, bool IsMuted, int AppVolume);
 ```
+
+`AppVolume` is the active audio session's volume (0–100); 0 if no active session.
 
 ### `SerialPacket`
 
 ```csharp
-record SerialPacket(string Song, string Artist, int Volume, bool IsMuted)
+record SerialPacket(string Song, string Artist, int Volume, bool IsMuted, int AppVolume)
 {
     public string Encode() =>
-        $"{Song}||{Artist}||{Volume}||{(IsMuted ? 1 : 0)}\n";
+        $"{Song}||{Artist}||{Volume}||{(IsMuted ? 1 : 0)}||{AppVolume}\n";
 }
 ```
 
@@ -134,7 +136,11 @@ interface ISerialManager
 - On `Send()`: if not connected, attempt to connect first. Write ASCII-encoded bytes.
 - Connection establishment: iterate known VID:PID pairs via WMI `Win32_PnPEntity` to find the COM port. If `ComPort` is set in config, use it directly. Retry up to 5 times with `ReconnectDelayMs` delay. Wait 2 seconds after opening before sending.
 - If a `SerialException` is thrown during `Send()`, close the port and mark as disconnected. The next `Send()` call will reconnect.
-- Read loop: a background thread calls `ReadLine()` in a loop. Any non-empty line received is raised via `LineReceived`. All received lines are logged at Debug level — no operational processing currently expected from the Panel.
+- Read loop: a background thread calls `ReadLine()` in a loop. Any non-empty line received is raised via `LineReceived`.
+- `LineReceived` subscribers handle operational messages:
+  - `APPVOL:+` — increase active session volume by 2%
+  - `APPVOL:-` — decrease active session volume by 2%
+  - All other lines are logged at Debug level.
 
 ---
 
@@ -144,6 +150,7 @@ interface ISerialManager
 interface IAudioStateProvider
 {
     AudioState GetCurrent();
+    void AdjustAppVolume(int delta);
 }
 ```
 
@@ -151,7 +158,8 @@ interface IAudioStateProvider
 
 - On construction: acquire the default audio render endpoint via `MMDeviceEnumerator` targeting `DataFlow.Render` / `Role.Multimedia`.
 - `GetCurrent()`: returns cached value. Refreshes cache when `VolumeAudioPollIntervalMs` has elapsed since last read.
-- Cache refresh: read `AudioEndpointVolume.MasterVolumeLevelScalar` (map to 0–100 integer) and `AudioEndpointVolume.Mute`.
+- Cache refresh: read `AudioEndpointVolume.MasterVolumeLevelScalar` (map to 0–100 integer), `AudioEndpointVolume.Mute`, and the active session's `SimpleAudioVolume.MasterVolume` (map to 0–100 integer). Active session is the first `AudioSessionState.Active` session with an associated process.
+- `AdjustAppVolume(int delta)`: find the active session, read its current `SimpleAudioVolume.MasterVolume`, add `delta / 100.0f`, clamp to `[0.0, 1.0]`, write back. Invalidates the app volume cache so the next `GetCurrent()` reflects the change immediately.
 
 ---
 
@@ -251,13 +259,16 @@ Input: raw WinRT `title` string + `artist` string.
 
 Runs every `MainLoopIntervalMs` (200ms):
 
-1. Get `AudioState` from `IAudioStateProvider`
+1. Get `AudioState` from `IAudioStateProvider` (includes `Volume`, `IsMuted`, `AppVolume`)
 2. Get `MediaInfo?` from `IMediaInfoProvider`
 3. Build `SerialPacket`:
    - If `MediaInfo` is null: `song = ""`, `artist = ""`
    - Otherwise: apply title parser per source selection, apply ASCII sanitization
+   - Always populate `Volume`, `IsMuted`, `AppVolume` from `AudioState`
 4. If packet content differs from last sent, or `KeepaliveIntervalMs` has elapsed: call `ISerialManager.Send(packet.Encode())`
 5. Update last-sent packet and timestamp
+
+`APPVOL:+` / `APPVOL:-` messages from the Panel are handled on the serial read thread via the `LineReceived` event → `IAudioStateProvider.AdjustAppVolume(±2)`. This is independent of the main loop.
 
 ---
 
@@ -282,6 +293,8 @@ Runs every `MainLoopIntervalMs` (200ms):
 | WinRT metadata retrieved | Debug |
 | WinRT session errors | Warning |
 | Unhandled exceptions in loops | Error |
-| Lines received from Panel | Debug |
+| `APPVOL:+/-` received, session adjusted | Debug |
+| `APPVOL:+/-` received, no active session | Warning |
+| Lines received from Panel (other) | Debug |
 
 Target: Windows Event Log (`Application` source `MatricePadService`) for Warning and above; optionally a rolling file sink for Debug in development.
