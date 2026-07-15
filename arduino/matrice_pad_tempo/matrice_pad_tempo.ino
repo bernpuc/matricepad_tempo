@@ -3,6 +3,9 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 
 // ── Display layout switch ─────────────────────────────────────────────────────
 // Set to 2 or 3 to select the display layout.
@@ -30,6 +33,7 @@
 // 128px / 6px-per-char (5px glyph + 1px spacing) = 21 chars at text size 1
 #define DISPLAY_CHARS_PER_LINE 21
 #define MAX_SERIAL_BUFFER     256
+#define MAX_FIELD_LEN          96
 
 // ── Row y-positions ───────────────────────────────────────────────────────────
 #if DISPLAY_LINES == 2
@@ -58,7 +62,10 @@ int lastEncoderState = LOW;
 unsigned long lastEncoderDebounceTime = 0;
 const unsigned long ENCODER_DEBOUNCE_MS = 10;
 
-String inputBuffer = "";
+// Fixed-size serial receive buffer (no String/heap churn on parse).
+char inputBuffer[MAX_SERIAL_BUFFER];
+int  inputLen = 0;
+
 int volume    = 0;
 int appVolume = 0;
 
@@ -71,9 +78,9 @@ unsigned long lastEncoderAdjustTime = 0;
 bool muteDisplayed = false;
 unsigned long muteDisplayStart = 0;
 
-String line1  = "";
-String line2  = "";   // used in 3-line mode only
-String artist = "";
+char line1[MAX_FIELD_LEN]  = "";
+char line2[MAX_FIELD_LEN]  = "";   // used in 3-line mode only
+char artist[MAX_FIELD_LEN] = "";
 
 bool isMuted  = false;
 bool isPaused = false;
@@ -111,6 +118,19 @@ int lastButtonState = HIGH;
 int lastRawButton   = HIGH;
 unsigned long lastDebounceTime = 0;
 const int debounceDelay = 50;
+
+// ── Serial parse helpers (no String allocation — mutates inputBuffer in place) ─
+char* findSep(char *s) {
+    return strstr(s, "||");
+}
+
+void trimInPlace(char *s) {
+    int len = strlen(s);
+    while (len > 0 && isspace((unsigned char)s[len - 1])) s[--len] = '\0';
+    int start = 0;
+    while (s[start] && isspace((unsigned char)s[start])) start++;
+    if (start > 0) memmove(s, s + start, len - start + 1);
+}
 
 // ── Scroll helpers ────────────────────────────────────────────────────────────
 void resetScroll(LineScroll &s) {
@@ -235,39 +255,70 @@ void loop() {
     while (Serial.available()) {
         char c = Serial.read();
         if (c == '\n') {
-            int firstSep  = inputBuffer.indexOf("||");
-            int secondSep = inputBuffer.indexOf("||", firstSep + 2);
-            int thirdSep  = inputBuffer.indexOf("||", secondSep + 2);
-            int fourthSep = inputBuffer.indexOf("||", thirdSep + 2);
-            int fifthSep  = inputBuffer.indexOf("||", fourthSep + 2);
+            inputBuffer[inputLen] = '\0';
 
-            if (firstSep != -1 && secondSep != -1 && thirdSep != -1 && fourthSep != -1 && fifthSep != -1) {
-                String songTitle = inputBuffer.substring(0, firstSep);
-                String newArtist = inputBuffer.substring(firstSep + 2, secondSep);
-                volume    = inputBuffer.substring(secondSep + 2, thirdSep).toInt();
-                bool newMuted = inputBuffer.substring(thirdSep + 2, fourthSep).toInt() != 0;
-                appVolume = inputBuffer.substring(fourthSep + 2, fifthSep).toInt();
-                isPaused  = inputBuffer.substring(fifthSep + 2).toInt() != 0;
+            char *pTitle  = inputBuffer;
+            char *pArtist = nullptr;
+            char *pVolume = nullptr;
+            char *pMuted  = nullptr;
+            char *pAppVol = nullptr;
+            char *pPaused = nullptr;
+
+            char *sep1 = findSep(pTitle);
+            char *sep2 = nullptr, *sep3 = nullptr, *sep4 = nullptr, *sep5 = nullptr;
+            if (sep1) {
+                *sep1 = '\0';
+                pArtist = sep1 + 2;
+                sep2 = findSep(pArtist);
+            }
+            if (sep2) {
+                *sep2 = '\0';
+                pVolume = sep2 + 2;
+                sep3 = findSep(pVolume);
+            }
+            if (sep3) {
+                *sep3 = '\0';
+                pMuted = sep3 + 2;
+                sep4 = findSep(pMuted);
+            }
+            if (sep4) {
+                *sep4 = '\0';
+                pAppVol = sep4 + 2;
+                sep5 = findSep(pAppVol);
+            }
+            if (sep5) {
+                *sep5 = '\0';
+                pPaused = sep5 + 2;
+            }
+
+            if (pPaused != nullptr) {
+                volume    = atoi(pVolume);
+                bool newMuted = atoi(pMuted) != 0;
+                appVolume = atoi(pAppVol);
+                isPaused  = atoi(pPaused) != 0;
                 if (newMuted != isMuted) {
                     isMuted = newMuted;
                     applyMuteContrast();
                 }
 
-                songTitle.trim();
+                trimInPlace(pTitle);
 
 #if DISPLAY_LINES == 2
-                if (songTitle != line1) {
-                    line1 = songTitle;
+                if (strcmp(pTitle, line1) != 0) {
+                    strncpy(line1, pTitle, MAX_FIELD_LEN - 1);
+                    line1[MAX_FIELD_LEN - 1] = '\0';
                     resetScroll(scroll[0]);
                 }
-                if (newArtist != artist) {
-                    artist = newArtist;
+                if (strcmp(pArtist, artist) != 0) {
+                    strncpy(artist, pArtist, MAX_FIELD_LEN - 1);
+                    artist[MAX_FIELD_LEN - 1] = '\0';
                     resetScroll(scroll[1]);
                 }
 #else
-                splitTitleIntoLines(songTitle, line1, line2, DISPLAY_CHARS_PER_LINE);
-                if (newArtist != artist) {
-                    artist = newArtist;
+                splitTitleIntoLines(pTitle, line1, line2, DISPLAY_CHARS_PER_LINE);
+                if (strcmp(pArtist, artist) != 0) {
+                    strncpy(artist, pArtist, MAX_FIELD_LEN - 1);
+                    artist[MAX_FIELD_LEN - 1] = '\0';
                     resetScroll(scroll[0]);
                 }
 #endif
@@ -280,10 +331,10 @@ void loop() {
                 lastUpdateTime = millis();
             }
 
-            inputBuffer = "";
+            inputLen = 0;
         } else {
-            if (inputBuffer.length() < MAX_SERIAL_BUFFER) {
-                inputBuffer += c;
+            if (inputLen < MAX_SERIAL_BUFFER - 1) {
+                inputBuffer[inputLen++] = c;
             }
         }
     }
@@ -350,10 +401,10 @@ void loop() {
     if (connected && !volumeBeingAdjusted && !muteDisplayed) {
         bool redraw = false;
 #if DISPLAY_LINES == 2
-        redraw |= tickScroll(scroll[0], (int)line1.length()  * CHAR_WIDTH_PX);
-        redraw |= tickScroll(scroll[1], (int)artist.length() * CHAR_WIDTH_PX);
+        redraw |= tickScroll(scroll[0], (int)strlen(line1)  * CHAR_WIDTH_PX);
+        redraw |= tickScroll(scroll[1], (int)strlen(artist) * CHAR_WIDTH_PX);
 #else
-        redraw |= tickScroll(scroll[0], (int)artist.length() * CHAR_WIDTH_PX);
+        redraw |= tickScroll(scroll[0], (int)strlen(artist) * CHAR_WIDTH_PX);
 #endif
         if (redraw) drawMediaDisplay();
     }
@@ -398,27 +449,43 @@ void loop() {
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
-void splitTitleIntoLines(const String &title, String &out1, String &out2, int maxLen) {
-    if ((int)title.length() <= maxLen) {
-        out1 = title;
-        out2 = "";
+// Copies at most (MAX_FIELD_LEN - 1) chars from src into fixed-size dst, always
+// null-terminating. No heap allocation.
+static void copyField(char *dst, const char *src, int len) {
+    if (len > MAX_FIELD_LEN - 1) len = MAX_FIELD_LEN - 1;
+    if (len < 0) len = 0;
+    strncpy(dst, src, len);
+    dst[len] = '\0';
+}
+
+void splitTitleIntoLines(const char *title, char *out1, char *out2, int maxLen) {
+    int titleLen = (int)strlen(title);
+    if (titleLen <= maxLen) {
+        copyField(out1, title, titleLen);
+        out2[0] = '\0';
         return;
     }
     int splitPos = -1;
     for (int i = maxLen; i >= 0; i--) {
-        if (title.charAt(i) == ' ') {
+        if (title[i] == ' ') {
             splitPos = i;
             break;
         }
     }
     if (splitPos == -1) {
-        out1 = title.substring(0, maxLen - 3) + "...";
-        out2 = "";
+        copyField(out1, title, maxLen - 3);
+        strcat(out1, "...");
+        out2[0] = '\0';
     } else {
-        out1 = title.substring(0, splitPos);
-        out2 = title.substring(splitPos + 1);
-        if ((int)out2.length() > maxLen) {
-            out2 = out2.substring(0, maxLen - 3) + "...";
+        copyField(out1, title, splitPos);
+
+        const char *rest = title + splitPos + 1;
+        int restLen = (int)strlen(rest);
+        if (restLen > maxLen) {
+            copyField(out2, rest, maxLen - 3);
+            strcat(out2, "...");
+        } else {
+            copyField(out2, rest, restLen);
         }
     }
 }
