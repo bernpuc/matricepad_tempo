@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdio.h>
 
 // ── Display layout switch ─────────────────────────────────────────────────────
 // Set to 2 or 3 to select the display layout.
@@ -73,10 +74,16 @@ unsigned long lastUpdateTime = 0;
 const unsigned long TIMEOUT = 5000;
 bool connected = false;
 
-bool volumeBeingAdjusted = false;
-unsigned long lastEncoderAdjustTime = 0;
-bool muteDisplayed = false;
-unsigned long muteDisplayStart = 0;
+// ── Transient overlay state ───────────────────────────────────────────────────
+// A single active "overlay" replaces the media display for a fixed duration
+// (volume readout, mute/unmute banner, or SYS/APP mode banner), then reverts.
+// Only one can be showing at a time — raising a new one simply replaces
+// whichever was active, which is exactly what happened by accident before
+// this was unified (whichever handler drew last "won" the screen anyway).
+enum OverlayKind { OVERLAY_NONE, OVERLAY_VOLUME, OVERLAY_MUTE, OVERLAY_MODE };
+OverlayKind   activeOverlay    = OVERLAY_NONE;
+unsigned long overlayStart     = 0;
+unsigned long overlayDurationMs = 0;
 
 char line1[MAX_FIELD_LEN]  = "";
 char line2[MAX_FIELD_LEN]  = "";   // used in 3-line mode only
@@ -215,6 +222,22 @@ void drawMediaDisplay() {
     display.display();
 }
 
+// Draws a full-screen single-line banner and marks it as the active overlay
+// for durationMs. checkOverlayTimeout() reverts to drawMediaDisplay() once
+// that time has elapsed. Used for the volume readout, mute/unmute banner, and
+// SYS/APP mode banner — the one place their shared draw+timer boilerplate lives.
+void showOverlay(OverlayKind kind, unsigned long durationMs, int textSize, int x, int y, const char *text) {
+    display.clearDisplay();
+    display.setTextSize(textSize);
+    display.setCursor(x, y);
+    display.println(text);
+    display.display();
+
+    activeOverlay    = kind;
+    overlayStart     = millis();
+    overlayDurationMs = durationMs;
+}
+
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {
     delay(2000);
@@ -248,10 +271,13 @@ void setup() {
     lastUpdateTime = millis();
 }
 
-// ── Main loop ─────────────────────────────────────────────────────────────────
-void loop() {
+// ── Loop step handlers ─────────────────────────────────────────────────────────
+// Each function owns one independent concern of loop(). They communicate only
+// through the globals declared above — no parameters are passed between them.
 
-    // --- Serial from PC ---
+// Reads and parses "song||artist||volume||muted||appVolume||paused" lines from
+// the PC, updating display/volume/mute/pause state on a complete message.
+void handleSerialInput() {
     while (Serial.available()) {
         char c = Serial.read();
         if (c == '\n') {
@@ -323,7 +349,7 @@ void loop() {
                 }
 #endif
 
-                if (!volumeBeingAdjusted && !muteDisplayed) {
+                if (activeOverlay == OVERLAY_NONE) {
                     drawMediaDisplay();
                 }
 
@@ -338,8 +364,11 @@ void loop() {
             }
         }
     }
+}
 
-    // --- Encoder button (mode toggle: SYSTEM <-> APP volume) ---
+// Debounces the encoder's push-button and toggles SYSTEM/APP volume mode on
+// each confirmed press, showing a brief "SYS VOL"/"APP VOL" banner.
+void handleModeButton() {
     int reading = digitalRead(ENCODER_BTN);
     if (reading != lastRawButton) {
         lastDebounceTime = millis();
@@ -348,25 +377,15 @@ void loop() {
     if ((millis() - lastDebounceTime) > debounceDelay) {
         if (reading == LOW && lastButtonState == HIGH) {
             currentMode = (currentMode == SYSTEM_VOL) ? APP_VOL : SYSTEM_VOL;
-
-            display.clearDisplay();
-            display.setTextSize(2);
-            display.setCursor(4, 8);
-            display.println(currentMode == SYSTEM_VOL ? "SYS VOL" : "APP VOL");
-            display.display();
-
-            muteDisplayed    = true;
-            muteDisplayStart = millis();
+            showOverlay(OVERLAY_MODE, 1000, 2, 4, 8, currentMode == SYSTEM_VOL ? "SYS VOL" : "APP VOL");
         }
         lastButtonState = reading;
     }
+}
 
-    if (muteDisplayed && (millis() - muteDisplayStart > 1000)) {
-        muteDisplayed = false;
-        drawMediaDisplay();
-    }
-
-    // --- Encoder rotation (volume) ---
+// Reads the rotary encoder, sends a volume-up/down HID key (SYSTEM mode) or an
+// APPVOL serial command (APP mode), and shows a transient "Vol: NN%" readout.
+void handleEncoderRotation() {
     int currentStateCLK = digitalRead(ENCODER_PIN_CLK);
     if (lastEncoderState == HIGH && currentStateCLK == LOW &&
             millis() - lastEncoderDebounceTime >= ENCODER_DEBOUNCE_MS) {
@@ -379,26 +398,29 @@ void loop() {
             Serial.println(clockwise ? "APPVOL:+" : "APPVOL:-");
         }
 
-        display.clearDisplay();
-        display.setTextSize(2);
-        display.setCursor(10, 8);
-        display.print(currentMode == SYSTEM_VOL ? "Vol: " : "App: ");
-        display.print(currentMode == SYSTEM_VOL ? volume : appVolume);
-        display.print("%");
-        display.display();
-
-        volumeBeingAdjusted   = true;
-        lastEncoderAdjustTime = millis();
+        char overlayText[16];
+        snprintf(overlayText, sizeof(overlayText), "%s%d%%",
+                 currentMode == SYSTEM_VOL ? "Vol: " : "App: ",
+                 currentMode == SYSTEM_VOL ? volume : appVolume);
+        showOverlay(OVERLAY_VOLUME, 1000, 2, 10, 8, overlayText);
     }
     lastEncoderState = currentStateCLK;
+}
 
-    if (volumeBeingAdjusted && (millis() - lastEncoderAdjustTime > 1000)) {
-        volumeBeingAdjusted = false;
-        if (!muteDisplayed) drawMediaDisplay();
+// Clears whichever overlay (volume/mute/mode banner) is active once its
+// duration has elapsed, and restores the normal media display.
+void checkOverlayTimeout() {
+    if (activeOverlay != OVERLAY_NONE && (millis() - overlayStart > overlayDurationMs)) {
+        activeOverlay = OVERLAY_NONE;
+        drawMediaDisplay();
     }
+}
 
-    // --- Scroll tick ---
-    if (connected && !volumeBeingAdjusted && !muteDisplayed) {
+// Advances the song/artist marquee scroll and redraws only when a step moved.
+// Skipped while a transient overlay (volume/mute/mode banner) is on screen, or
+// before the first PC message has ever arrived (nothing to scroll yet).
+void handleScrollTick() {
+    if (connected && activeOverlay == OVERLAY_NONE) {
         bool redraw = false;
 #if DISPLAY_LINES == 2
         redraw |= tickScroll(scroll[0], (int)strlen(line1)  * CHAR_WIDTH_PX);
@@ -408,8 +430,12 @@ void loop() {
 #endif
         if (redraw) drawMediaDisplay();
     }
+}
 
-    // --- Serial timeout ---
+// Declares the PC connection lost after TIMEOUT ms of silence and shows a
+// "No connection" screen. Cleared again as soon as a valid message arrives
+// (see handleSerialInput(), which sets connected = true).
+void checkSerialTimeout() {
     if (connected && (millis() - lastUpdateTime > TIMEOUT)) {
         connected = false;
         display.clearDisplay();
@@ -420,8 +446,13 @@ void loop() {
         display.println("Awaiting update...");
         display.display();
     }
+}
 
-    // --- Keypad ---
+// Scans the 2x2 media keypad. Mute is handled locally (banner + HID mute key);
+// prev/play-pause/next are sent as plain HID consumer keys with no Arduino-side
+// state to track — the PC's own player reports the resulting state back on the
+// next serial update.
+void handleKeypad() {
     if (customKeypad.getKeys()) {
         for (int i = 0; i < LIST_MAX; i++) {
             Key k = customKeypad.key[i];
@@ -431,13 +462,7 @@ void loop() {
                         isMuted = !isMuted;
                         applyMuteContrast();
                         Consumer.write(MEDIA_VOLUME_MUTE);
-                        display.clearDisplay();
-                        display.setTextSize(3);
-                        display.setCursor(10, 4);
-                        display.println(isMuted ? "MUTE" : "UNMUTE");
-                        display.display();
-                        muteDisplayed    = true;
-                        muteDisplayStart = millis();
+                        showOverlay(OVERLAY_MUTE, 1000, 3, 10, 4, isMuted ? "MUTE" : "UNMUTE");
                         break;
                     case 'R': Consumer.write(MEDIA_PREVIOUS);   break;
                     case 'P': Consumer.write(MEDIA_PLAY_PAUSE); break;
@@ -446,6 +471,21 @@ void loop() {
             }
         }
     }
+}
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+// Order matters: checkOverlayTimeout() must run after the handlers that can
+// raise an overlay, and before handleScrollTick()/checkSerialTimeout() so a
+// just-cleared overlay doesn't suppress a redraw those steps would otherwise
+// trigger.
+void loop() {
+    handleSerialInput();
+    handleModeButton();
+    handleEncoderRotation();
+    checkOverlayTimeout();
+    handleScrollTick();
+    checkSerialTimeout();
+    handleKeypad();
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
