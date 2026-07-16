@@ -31,10 +31,29 @@ List any software, hardware, or libraries required to run the project.
 
 **Software:**
 
-*   Arduino IDE — board: *SparkFun Pro Micro 5V/16MHz* (or *Arduino Leonardo*)
+*   Arduino IDE — board: *SparkFun Pro Micro 5V/16MHz* (or *Arduino Leonardo*) — **or** `arduino-cli` (see below)
 *   Arduino libraries: `Keypad`, `HID-Project` (NicoHood), `Adafruit GFX`, `Adafruit SSD1306`
 *   Python 3.10 (required — the `winrt` wheels are built for cp310)
 *   Python libraries: `pyserial`, `pycaw`, `comtypes`, `pywin32`, `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Media.Control`
+
+### Building/Uploading the Firmware
+
+The sketch depends on `arduino/libraries/TempoCore` (shared scroll/icon/serial-parsing code, in-repo — see `CLAUDE.md`). Two ways to build:
+
+**Via `arduino-cli`** (no IDE library setup needed):
+```powershell
+arduino-cli core install arduino:avr
+arduino-cli lib install "Keypad" "HID-Project" "Adafruit GFX Library" "Adafruit SSD1306"
+./arduino/build.ps1 -Sketch arduino/matrice_pad_tempo               # compile only
+./arduino/build.ps1 -Sketch arduino/matrice_pad_tempo -Port COM7    # compile + upload
+```
+If double-tapping the Pro Micro's reset pin to reach the bootloader (see upload tip below), `build.ps1` waits up to 20s (`-DiscoveryTimeout`) for the bootloader port to reappear instead of arduino-cli's default 1s, which is too tight to hit manually.
+
+**Via the Arduino IDE:** the IDE only auto-discovers libraries from its sketchbook folder, not this repo, so link `TempoCore` into the sketchbook once:
+```powershell
+New-Item -ItemType Junction -Path "<your sketchbook>\libraries\TempoCore" -Target "<repo path>\arduino\libraries\TempoCore"
+```
+(Find your sketchbook path via File → Preferences → "Sketchbook location" in the IDE.) After that, open `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` directly and Upload as normal.
 
 ### Installation
 

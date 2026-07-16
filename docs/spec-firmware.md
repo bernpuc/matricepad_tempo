@@ -38,6 +38,18 @@ The firmware has no connectivity dependency — all HID controls function regard
 | HID-Project (NicoHood) | HID consumer control interface |
 | Keypad (Mark Stanley) | 2×2 matrix key scanning |
 
+### 3.1 Shared Code (`TempoCore`)
+
+The marquee scroll engine, status-icon/overlay drawing, and `\|\|`-delimited serial field parsing live in an in-repo Arduino library, `arduino/libraries/TempoCore` (not the sketchbook), so future feature sketches can reuse them without duplication:
+
+| Header | Contents |
+|---|---|
+| `ScrollText.h` | `LineScroll` struct, `resetScroll()`, `tickScroll()` |
+| `StatusIcons.h` | `drawCircleIcon()`, `applyMuteContrast()`, `showOverlayBanner()` |
+| `SerialFraming.h` | `findSep()`, `trimInPlace()`, `copyField()`, `splitTitleIntoLines()` |
+
+Building/uploading requires resolving this library path explicitly — via `arduino/build.ps1` (wraps `arduino-cli` with `--libraries arduino/libraries`), or by linking `TempoCore` into the Arduino IDE's sketchbook `libraries/` folder. See the README for both paths.
+
 ---
 
 ## 4. Configuration Constants

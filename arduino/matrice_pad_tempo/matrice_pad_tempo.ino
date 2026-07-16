@@ -3,10 +3,13 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <TempoCore.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
+
+using namespace TempoCore;
 
 // ── Display layout switch ─────────────────────────────────────────────────────
 // Set to 2 or 3 to select the display layout.
@@ -23,7 +26,7 @@
 //   Rows 0–1: song title word-wrapped (static)
 //   Row 2:    artist name (scrolls when > 21 chars)
 //   Better for long titles that would otherwise scroll constantly.
-#define DISPLAY_LINES 2
+#define DISPLAY_LINES 3
 
 // ── OLED ──────────────────────────────────────────────────────────────────────
 #define SCREEN_WIDTH  128
@@ -96,12 +99,6 @@ enum VolumeMode { SYSTEM_VOL, APP_VOL };
 VolumeMode currentMode = SYSTEM_VOL;
 
 // ── Scroll state ──────────────────────────────────────────────────────────────
-struct LineScroll {
-    int           pixel;
-    unsigned long lastTime;
-    int8_t        dir;   // 0 = paused, +1 = scrolling forward, -1 = scrolling backward
-};
-
 #if DISPLAY_LINES == 2
 LineScroll scroll[2];   // [0] = song line   [1] = artist line
 #else
@@ -126,72 +123,9 @@ int lastRawButton   = HIGH;
 unsigned long lastDebounceTime = 0;
 const int debounceDelay = 50;
 
-// ── Serial parse helpers (no String allocation — mutates inputBuffer in place) ─
-char* findSep(char *s) {
-    return strstr(s, "||");
-}
-
-void trimInPlace(char *s) {
-    int len = strlen(s);
-    while (len > 0 && isspace((unsigned char)s[len - 1])) s[--len] = '\0';
-    int start = 0;
-    while (s[start] && isspace((unsigned char)s[start])) start++;
-    if (start > 0) memmove(s, s + start, len - start + 1);
-}
-
-// ── Scroll helpers ────────────────────────────────────────────────────────────
-void resetScroll(LineScroll &s) {
-    s.pixel    = 0;
-    s.dir      = 0;
-    s.lastTime = millis();
-}
-
-// Advance one scroll state. Returns true when the display needs a redraw.
-bool tickScroll(LineScroll &s, int contentPx) {
-    if (contentPx <= SCREEN_WIDTH) return false;
-    int maxPx = contentPx - SCREEN_WIDTH;
-    unsigned long now = millis();
-
-    if (s.dir == 0) {
-        if (now - s.lastTime >= SCROLL_PAUSE_MS) {
-            s.dir      = (s.pixel == 0) ? 1 : -1;
-            s.lastTime = now;
-        }
-    } else {
-        if (now - s.lastTime >= SCROLL_STEP_MS) {
-            s.lastTime = now;
-            s.pixel   += s.dir;
-            if (s.pixel >= maxPx) { s.pixel = maxPx; s.dir = 0; }
-            else if (s.pixel <= 0) { s.pixel = 0;    s.dir = 0; }
-            return true;
-        }
-    }
-    return false;
-}
-
 // ── Drawing ───────────────────────────────────────────────────────────────────
-void drawCircleIcon(bool isMute) {
-    display.fillCircle(64, 16, 15, SSD1306_WHITE);
-    if (isMute) {
-        // Speaker body
-        display.fillRect(50, 13, 5, 7, SSD1306_BLACK);
-        // Speaker cone (horn)
-        display.fillTriangle(54, 13, 54, 20, 62, 24, SSD1306_BLACK);
-        display.fillTriangle(54, 13, 62,  8, 62, 24, SSD1306_BLACK);
-        // X mark (two thick diagonal lines each)
-        display.drawLine(65, 12, 72, 20, SSD1306_BLACK);
-        display.drawLine(66, 12, 73, 20, SSD1306_BLACK);
-        display.drawLine(65, 20, 72, 12, SSD1306_BLACK);
-        display.drawLine(66, 20, 73, 12, SSD1306_BLACK);
-    } else {
-        // Paused: solid right-pointing play arrow
-        display.fillTriangle(76, 16, 58, 6, 58, 26, SSD1306_BLACK);
-    }
-}
-
 void applyMuteContrast() {
-    display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(isMuted ? 10 : 255);
+    TempoCore::applyMuteContrast(display, isMuted);
 }
 
 void drawMediaDisplay() {
@@ -215,9 +149,9 @@ void drawMediaDisplay() {
 #endif
 
     if (isMuted) {
-        drawCircleIcon(true);
+        TempoCore::drawCircleIcon(display, true);
     } else if (isPaused) {
-        drawCircleIcon(false);
+        TempoCore::drawCircleIcon(display, false);
     }
     display.display();
 }
@@ -227,11 +161,7 @@ void drawMediaDisplay() {
 // that time has elapsed. Used for the volume readout, mute/unmute banner, and
 // SYS/APP mode banner — the one place their shared draw+timer boilerplate lives.
 void showOverlay(OverlayKind kind, unsigned long durationMs, int textSize, int x, int y, const char *text) {
-    display.clearDisplay();
-    display.setTextSize(textSize);
-    display.setCursor(x, y);
-    display.println(text);
-    display.display();
+    TempoCore::showOverlayBanner(display, textSize, x, y, text);
 
     activeOverlay    = kind;
     overlayStart     = millis();
@@ -341,7 +271,7 @@ void handleSerialInput() {
                     resetScroll(scroll[1]);
                 }
 #else
-                splitTitleIntoLines(pTitle, line1, line2, DISPLAY_CHARS_PER_LINE);
+                splitTitleIntoLines(pTitle, line1, line2, MAX_FIELD_LEN, DISPLAY_CHARS_PER_LINE);
                 if (strcmp(pArtist, artist) != 0) {
                     strncpy(artist, pArtist, MAX_FIELD_LEN - 1);
                     artist[MAX_FIELD_LEN - 1] = '\0';
@@ -423,10 +353,10 @@ void handleScrollTick() {
     if (connected && activeOverlay == OVERLAY_NONE) {
         bool redraw = false;
 #if DISPLAY_LINES == 2
-        redraw |= tickScroll(scroll[0], (int)strlen(line1)  * CHAR_WIDTH_PX);
-        redraw |= tickScroll(scroll[1], (int)strlen(artist) * CHAR_WIDTH_PX);
+        redraw |= tickScroll(scroll[0], (int)strlen(line1)  * CHAR_WIDTH_PX, SCREEN_WIDTH, SCROLL_PAUSE_MS, SCROLL_STEP_MS);
+        redraw |= tickScroll(scroll[1], (int)strlen(artist) * CHAR_WIDTH_PX, SCREEN_WIDTH, SCROLL_PAUSE_MS, SCROLL_STEP_MS);
 #else
-        redraw |= tickScroll(scroll[0], (int)strlen(artist) * CHAR_WIDTH_PX);
+        redraw |= tickScroll(scroll[0], (int)strlen(artist) * CHAR_WIDTH_PX, SCREEN_WIDTH, SCROLL_PAUSE_MS, SCROLL_STEP_MS);
 #endif
         if (redraw) drawMediaDisplay();
     }
@@ -488,44 +418,3 @@ void loop() {
     handleKeypad();
 }
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
-// Copies at most (MAX_FIELD_LEN - 1) chars from src into fixed-size dst, always
-// null-terminating. No heap allocation.
-static void copyField(char *dst, const char *src, int len) {
-    if (len > MAX_FIELD_LEN - 1) len = MAX_FIELD_LEN - 1;
-    if (len < 0) len = 0;
-    strncpy(dst, src, len);
-    dst[len] = '\0';
-}
-
-void splitTitleIntoLines(const char *title, char *out1, char *out2, int maxLen) {
-    int titleLen = (int)strlen(title);
-    if (titleLen <= maxLen) {
-        copyField(out1, title, titleLen);
-        out2[0] = '\0';
-        return;
-    }
-    int splitPos = -1;
-    for (int i = maxLen; i >= 0; i--) {
-        if (title[i] == ' ') {
-            splitPos = i;
-            break;
-        }
-    }
-    if (splitPos == -1) {
-        copyField(out1, title, maxLen - 3);
-        strcat(out1, "...");
-        out2[0] = '\0';
-    } else {
-        copyField(out1, title, splitPos);
-
-        const char *rest = title + splitPos + 1;
-        int restLen = (int)strlen(rest);
-        if (restLen > maxLen) {
-            copyField(out2, rest, maxLen - 3);
-            strcat(out2, "...");
-        } else {
-            copyField(out2, rest, restLen);
-        }
-    }
-}
