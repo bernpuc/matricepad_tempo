@@ -46,7 +46,7 @@ def get_serial_packet(window_title, media_info, last_playing, current_volume, is
             winrt_artist = media_info.get("artist", "")
             artist, song = media_sources.parse_youtube_title(media_info["title"], winrt_artist)
             debugPrint(f"[parse] title='{media_info['title']}' winrt_artist='{winrt_artist}'"
-                       f" → artist='{artist}' song='{song}'")
+                       f" -> artist='{artist}' song='{song}'")
         if media_info and media_info.get("playback_status") == media_sources.PLAYBACK_STATUS_PAUSED:
             paused = 1
     elif window_title == "No media playing":
@@ -55,7 +55,7 @@ def get_serial_packet(window_title, media_info, last_playing, current_volume, is
             winrt_artist = last_playing.get("artist", "")
             artist, song = media_sources.parse_youtube_title(last_playing["title"], winrt_artist)
             debugPrint(f"[paused] title='{last_playing['title']}' winrt_artist='{winrt_artist}'"
-                       f" → artist='{artist}' song='{song}'")
+                       f" -> artist='{artist}' song='{song}'")
             paused = 1
     else:
         # Non-browser app is playing — use its window title

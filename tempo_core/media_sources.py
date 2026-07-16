@@ -116,7 +116,7 @@ def parse_youtube_title(raw_title, winrt_artist):
 
     # Topic channel / YouTube Music: no ' - ' in title, artist field is clean
     if ' - ' not in t and winrt_artist and not is_vevo:
-        debugPrint(f"[youtube] Topic channel — WinRT fields used directly")
+        debugPrint(f"[youtube] Topic channel -- WinRT fields used directly")
         return winrt_artist, t
 
     # No delimiter — fall back to WinRT artist
@@ -272,7 +272,7 @@ def _media_info_loop(stop_event):
                     with _media_info_lock:
                         _shared_media_info = None
                         _last_playing_media_info = None
-                    debugPrint("[WinRT] session gone — cleared shared/last_playing media_info")
+                    debugPrint("[WinRT] session gone -- cleared shared/last_playing media_info")
         except Exception as e:
             print(f"[Media Info Thread Error] {e}")
         time.sleep(3)
