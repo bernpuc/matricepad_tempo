@@ -6,3 +6,4 @@
 #include "ScrollText.h"
 #include "StatusIcons.h"
 #include "SerialFraming.h"
+#include "RotaryEncoder.h"

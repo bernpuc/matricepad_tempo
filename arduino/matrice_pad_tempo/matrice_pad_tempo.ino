@@ -62,8 +62,7 @@ using namespace TempoCore;
 #define ENCODER_BTN     19
 
 // ── Globals ───────────────────────────────────────────────────────────────────
-int lastEncoderState = LOW;
-unsigned long lastEncoderDebounceTime = 0;
+EncoderState encoderState;
 const unsigned long ENCODER_DEBOUNCE_MS = 10;
 
 // Fixed-size serial receive buffer (no String/heap churn on parse).
@@ -79,11 +78,13 @@ bool connected = false;
 
 // ── Transient overlay state ───────────────────────────────────────────────────
 // A single active "overlay" replaces the media display for a fixed duration
-// (volume readout, mute/unmute banner, or SYS/APP mode banner), then reverts.
-// Only one can be showing at a time — raising a new one simply replaces
-// whichever was active, which is exactly what happened by accident before
-// this was unified (whichever handler drew last "won" the screen anyway).
-enum OverlayKind { OVERLAY_NONE, OVERLAY_VOLUME, OVERLAY_MUTE, OVERLAY_MODE };
+// (volume readout or SYS/APP mode banner), then reverts. Mute has no banner --
+// the mute icon already shows that state, so a redundant "MUTE"/"UNMUTE" text
+// overlay would just be noise. Only one overlay can be showing at a time —
+// raising a new one simply replaces whichever was active, which is exactly
+// what happened by accident before this was unified (whichever handler drew
+// last "won" the screen anyway).
+enum OverlayKind { OVERLAY_NONE, OVERLAY_VOLUME, OVERLAY_MODE };
 OverlayKind   activeOverlay    = OVERLAY_NONE;
 unsigned long overlayStart     = 0;
 unsigned long overlayDurationMs = 0;
@@ -181,7 +182,7 @@ void setup() {
     pinMode(ENCODER_PIN_CLK, INPUT_PULLUP);
     pinMode(ENCODER_PIN_DT,  INPUT_PULLUP);
     pinMode(ENCODER_BTN,     INPUT_PULLUP);
-    lastEncoderState = digitalRead(ENCODER_PIN_CLK);
+    initEncoderState(encoderState, ENCODER_PIN_CLK);
 
     for (int i = 0; i < (int)(sizeof(scroll) / sizeof(scroll[0])); i++) {
         scroll[i] = {0, 0, 0};   // pixel=0, lastTime=0, dir=0
@@ -316,12 +317,8 @@ void handleModeButton() {
 // Reads the rotary encoder, sends a volume-up/down HID key (SYSTEM mode) or an
 // APPVOL serial command (APP mode), and shows a transient "Vol: NN%" readout.
 void handleEncoderRotation() {
-    int currentStateCLK = digitalRead(ENCODER_PIN_CLK);
-    if (lastEncoderState == HIGH && currentStateCLK == LOW &&
-            millis() - lastEncoderDebounceTime >= ENCODER_DEBOUNCE_MS) {
-        lastEncoderDebounceTime = millis();
-        bool clockwise = digitalRead(ENCODER_PIN_DT) == currentStateCLK;
-
+    bool clockwise;
+    if (tickEncoder(encoderState, ENCODER_PIN_CLK, ENCODER_PIN_DT, ENCODER_DEBOUNCE_MS, clockwise)) {
         if (currentMode == SYSTEM_VOL) {
             Consumer.write(clockwise ? MEDIA_VOLUME_UP : MEDIA_VOLUME_DOWN);
         } else {
@@ -334,7 +331,6 @@ void handleEncoderRotation() {
                  currentMode == SYSTEM_VOL ? volume : appVolume);
         showOverlay(OVERLAY_VOLUME, 1000, 2, 10, 8, overlayText);
     }
-    lastEncoderState = currentStateCLK;
 }
 
 // Clears whichever overlay (volume/mute/mode banner) is active once its
@@ -392,7 +388,7 @@ void handleKeypad() {
                         isMuted = !isMuted;
                         applyMuteContrast();
                         Consumer.write(MEDIA_VOLUME_MUTE);
-                        showOverlay(OVERLAY_MUTE, 1000, 3, 10, 4, isMuted ? "MUTE" : "UNMUTE");
+                        if (activeOverlay == OVERLAY_NONE) drawMediaDisplay();
                         break;
                     case 'R': Consumer.write(MEDIA_PREVIOUS);   break;
                     case 'P': Consumer.write(MEDIA_PLAY_PAUSE); break;
