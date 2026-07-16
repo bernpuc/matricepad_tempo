@@ -24,6 +24,13 @@ using namespace TempoCore;
 #define BAR_GAP      2
 #define BAR_SLOT    (BAR_WIDTH + BAR_GAP)
 
+// ── Elapsed/duration overlay ──────────────────────────────────────────────────
+// textSize 1 (8px tall, 5px glyph + 1px spacing = 6px wide per char) -- the
+// same small font the baseline sketch uses for its 3-line layout. Placed in
+// the upper-right corner, where treble bars tend to run low, so it rarely
+// competes with the tallest bars.
+#define TIME_CHAR_WIDTH_PX 6
+
 #define TIMEOUT 5000
 
 // ── Encoder pins ──────────────────────────────────────────────────────────────
@@ -51,6 +58,12 @@ int  inputLen = 0;
 
 int barLevels[NUM_BARS] = {0};   // each 0-100, received from the PC
 
+// Elapsed/duration in seconds, received from the PC. Both 0 when no WinRT
+// timeline is available (paused-out session, non-browser player, or nothing
+// playing) -- drawBars() skips the overlay entirely in that case.
+int elapsedSec  = 0;
+int durationSec = 0;
+
 bool connected = false;
 unsigned long lastUpdateTime = 0;
 
@@ -64,10 +77,10 @@ bool          overlayActive     = false;
 unsigned long overlayStart      = 0;
 unsigned long overlayDurationMs = 0;
 
-// Parses a "n,n,n,...\n" line (already null-terminated, no trailing \n) into
-// barLevels. Missing/malformed trailing fields are left at their previous
-// value rather than reset to 0, since a dropped/short frame shouldn't blank
-// the display.
+// Parses a "n,n,n,...,elapsedSec,durationSec\n" line (already null-terminated,
+// no trailing \n): NUM_BARS levels followed by two trailing seconds fields.
+// Missing/malformed trailing fields are left at their previous value rather
+// than reset to 0, since a dropped/short frame shouldn't blank the display.
 void parseFrame(char *line) {
     char *token = strtok(line, ",");
     for (int i = 0; i < NUM_BARS && token != nullptr; i++) {
@@ -76,6 +89,14 @@ void parseFrame(char *line) {
         if (level > 100) level = 100;
         barLevels[i] = level;
         token = strtok(nullptr, ",");
+    }
+
+    if (token != nullptr) {
+        elapsedSec = atoi(token);
+        token = strtok(nullptr, ",");
+    }
+    if (token != nullptr) {
+        durationSec = atoi(token);
     }
 }
 
@@ -88,6 +109,19 @@ void drawBars() {
             display.fillRect(x, SCREEN_HEIGHT - barHeightPx, BAR_WIDTH, barHeightPx, SSD1306_WHITE);
         }
     }
+
+    if (durationSec > 0) {
+        char timeText[16];
+        snprintf(timeText, sizeof(timeText), "%d:%02d/%d:%02d",
+                 elapsedSec / 60, elapsedSec % 60, durationSec / 60, durationSec % 60);
+        int textWidthPx = (int)strlen(timeText) * TIME_CHAR_WIDTH_PX;
+        int x = SCREEN_WIDTH - textWidthPx;
+        if (x < 0) x = 0;
+        display.setTextSize(1);
+        display.setCursor(x, 0);
+        display.println(timeText);
+    }
+
     if (isMuted) {
         drawCircleIcon(display, true);
     } else if (isPaused) {

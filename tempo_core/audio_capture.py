@@ -1,6 +1,12 @@
 import threading
 import warnings
 
+# Whichever library touches COM first wins the apartment mode for the whole
+# process: soundcard initializes COM as multi-threaded (MTA) on import, while
+# comtypes (pycaw's dependency) wants single-threaded (STA). Importing
+# comtypes here first claims STA before soundcard gets a chance, so this
+# module works regardless of what else happens to import soundcard first.
+import comtypes  # noqa: F401
 import numpy as np
 import soundcard as sc
 

@@ -1,13 +1,14 @@
 import asyncio
+import datetime
 import re
 import threading
 import time
 import unicodedata
 
-from winrt.windows.media.control import \
-    GlobalSystemMediaTransportControlsSessionManager as MediaManager
 from pycaw.pycaw import AudioUtilities
 from pycaw.constants import AudioSessionState
+from winrt.windows.media.control import \
+    GlobalSystemMediaTransportControlsSessionManager as MediaManager
 import win32gui  # pylint: disable=no-member
 import win32process  # pylint: disable=no-member
 
@@ -218,6 +219,28 @@ async def get_media_info_async():
         pb = chosen.get_playback_info()
         chosen_status = pb.playback_status if pb else -1
         info = await chosen.try_get_media_properties_async()
+
+        position_sec = 0
+        duration_sec = 0
+        try:
+            timeline = chosen.get_timeline_properties()
+            position = timeline.position
+            # Chrome (and most browsers) only calls setPositionState() on
+            # discrete events (seek, play, pause) -- not every frame -- so
+            # `position` is a snapshot as of `last_updated_time`, not a live
+            # ticking value. Extrapolate forward by wall-clock time elapsed
+            # since that snapshot while actually playing, same as Windows'
+            # own Now Playing widget does.
+            if chosen_status == PLAYBACK_STATUS_PLAYING:
+                elapsed_since_update = (
+                    datetime.datetime.now(datetime.timezone.utc) - timeline.last_updated_time
+                ).total_seconds()
+                position += datetime.timedelta(seconds=max(0.0, elapsed_since_update))
+            position_sec = int(position.total_seconds())
+            duration_sec = int(timeline.end_time.total_seconds())
+        except Exception as e:
+            debugPrint(f"[WinRT timeline] error: {e}")
+
         # genres, thumbnail, playback_type raise Traceback — skip them
         info_dict = {
             "artist":          info.artist,
@@ -226,6 +249,8 @@ async def get_media_info_async():
             "album_title":     info.album_title,
             "track_number":    info.track_number,
             "playback_status": chosen_status,
+            "position_sec":    position_sec,
+            "duration_sec":    duration_sec,
         }
         debugPrint(f"[WinRT raw] title='{info.title}' artist='{info.artist}'"
                    f" album_artist='{info.album_artist}' album='{info.album_title}'"
