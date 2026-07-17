@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-Field firmware updates for the Panel today require the Arduino IDE or `arduino-cli` plus the `TempoCore` library on the end user's machine — fine for development, not something to hand a normal user. This spec captures the idea of an **updater** that can flash a new sketch onto the Panel using nothing but the Windows Service installer (or a small companion utility), so firmware fixes can reach the field the same way software updates do.
+Field firmware updates for the Panel today require the Arduino IDE or `arduino-cli` plus the `TempoCore` library on the end user's machine — fine for development, not something to hand a normal user. This spec captures the idea of an **updater** that can flash a new sketch onto the Panel using nothing but the Windows App installer (or a small companion utility), so firmware fixes can reach the field the same way software updates do.
 
 The Panel's ATmega32U4 already ships with a Caterina bootloader (avr109 protocol) — the same one `arduino-cli upload`/the Arduino IDE use today. No new firmware capability is required to make this possible; the work is entirely on the PC side.
 
@@ -60,7 +60,7 @@ The updater compares this against the bundled `.hex`'s known version before offe
 
 Explicit, user-initiated action — **never automatic or silent**, given the higher failure cost of a bad firmware write:
 
-1. User clicks "Check for firmware update" (in the Windows Service's tray UI, a companion utility, or during installer upgrade)
+1. User clicks "Check for firmware update" (in the Windows App's tray UI, a companion utility, or during installer upgrade)
 2. Detect the Panel's COM port via VID:PID (reusing the existing auto-detection logic)
 3. Query current firmware version (section 4); compare against the bundled/downloaded update
 4. If an update is available, show a confirmation dialog (current version → new version) before proceeding
@@ -93,6 +93,6 @@ The updater should communicate this clearly on failure ("Update failed, but your
 
 ## 9. Open Questions / Out of Scope
 
-- Whether this lives inside `MatricePadService` itself (a tray icon action) or as a standalone "MatricePad Updater" utility invoked from the installer — undecided
+- Whether this lives inside `MatricePadApp` itself (a tray icon action) or as a standalone "MatricePad Updater" utility invoked from the installer — undecided
 - Whether update packages are bundled into the installer at build time or fetched from a remote source at runtime — undecided, has real implications for how firmware fixes get distributed between installer releases
 - Multi-board support, OTA/wireless update mechanisms — out of scope, consistent with the rest of this project's scope boundaries

@@ -7,9 +7,9 @@
 
 ## 1. Overview
 
-The Panel firmware runs on an ATmega32U4 (SparkFun Pro Micro, 5V/16MHz). It drives a 128×32 OLED display, reads a rotary encoder and a 2×2 keypad, sends HID consumer control events to the host, and receives now-playing data from the Windows Service over USB serial.
+The Panel firmware runs on an ATmega32U4 (SparkFun Pro Micro, 5V/16MHz). It drives a 128×32 OLED display, reads a rotary encoder and a 2×2 keypad, sends HID consumer control events to the host, and receives now-playing data from the Windows App over USB serial.
 
-The firmware has no connectivity dependency — all HID controls function regardless of whether the Windows Service is running.
+The firmware has no connectivity dependency — all HID controls function regardless of whether the Windows App is running.
 
 ---
 
@@ -74,9 +74,9 @@ Building/uploading requires resolving this library path explicitly — via `ardu
 
 | Variable | Type | Description |
 |---|---|---|
-| `isMuted` | `bool` | Current mute state, synced from Windows Service |
-| `isPaused` | `bool` | Current pause state, synced from Windows Service |
-| `volume` | `int` | Last system volume received from Windows Service (0–100) |
+| `isMuted` | `bool` | Current mute state, synced from Windows App |
+| `isPaused` | `bool` | Current pause state, synced from Windows App |
+| `volume` | `int` | Last system volume received from Windows App (0–100) |
 | `currentDisplayMode` | `DisplayMode` | `MODE_TEXT` or `MODE_BARS`; toggled by the encoder button, defaults to `MODE_TEXT` on boot |
 | `barLevels[16]` | `int[]` | Frequency bar levels (0–100), received from the PC |
 | `elapsedSec` / `durationSec` | `int` | WinRT-only; both 0 when no timeline is available |

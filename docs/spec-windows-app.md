@@ -1,13 +1,15 @@
-# Software Specification: Windows Service
+# Software Specification: Windows App
 ## Matrice Pad Sound Panel — .NET 9
 
-**Version:** 1.2
+**Version:** 1.3
 
 ---
 
 ## 1. Overview
 
-The Windows Service is a .NET 9 Worker Service that runs as a Windows background service. It monitors Windows audio state, retrieves now-playing metadata, captures loopback audio for the Panel's frequency bar graph, and pushes all of it to the Panel over USB serial, unconditionally. It has no UI. It never receives data back from the Panel -- HID volume/media-key events and the Panel's display-mode toggle are entirely independent of this service.
+The Windows App is a .NET 9 console/background application that runs **per-user, started at logon** -- not a Windows Service. It monitors Windows audio state, retrieves now-playing metadata, captures loopback audio for the Panel's frequency bar graph, and pushes all of it to the Panel over USB serial, unconditionally. It has no UI (aside from an optional tray icon, out of scope for this spec). It never receives data back from the Panel -- HID volume/media-key events and the Panel's display-mode toggle are entirely independent of this app.
+
+**Why not a Windows Service:** an earlier design considered a true LocalSystem Windows Service. A throwaway probe (`SessionZeroProbe`, see below) confirmed that WinRT's `GlobalSystemMediaTransportControlsSessionManager` fails outright when running in Session 0 (`COMException: The specified service does not exist as an installed service.`) -- the API depends on a broker that only activates in an interactive user session. Desktop window enumeration (used for the non-browser title-parsing fallback, section 8) has the same fundamental limitation: there is no desktop to enumerate in Session 0. Interestingly, NAudio's `MMDeviceEnumerator`/default-endpoint access *did* succeed under the same LocalSystem/Session 0 conditions, so the failure is specific to desktop/session-scoped APIs (WinRT media brokering, window enumeration), not audio access broadly. Since the only real benefit of a true service -- working before login / across user switches / with nobody logged in (e.g. an HTPC-style box) -- isn't a requirement here ("runs whenever I'm logged in" is sufficient), the simplest correct architecture is a single per-user process, avoiding a service/helper split and IPC entirely.
 
 ---
 
@@ -15,8 +17,8 @@ The Windows Service is a .NET 9 Worker Service that runs as a Windows background
 
 | Concern | Technology |
 |---|---|
-| Service host | .NET 9 Worker Service (`BackgroundService`) |
-| Windows Service integration | `UseWindowsService()` |
+| App host | .NET 9 console app / generic host (`BackgroundService` under `Host.CreateApplicationBuilder`) |
+| Startup | Task Scheduler task with an "At log on" trigger (installer-registered), running as the interactive user |
 | WinRT media transport | `Windows.Media.Control` via .NET WinRT interop |
 | Audio API | `NAudio.CoreAudioApi` (MMDevice) for volume/mute; `NAudio.Wave.WasapiLoopbackCapture` for the bar graph |
 | FFT | `MathNet.Numerics` (or equivalent) for the bar graph's spectrum |
@@ -24,7 +26,7 @@ The Windows Service is a .NET 9 Worker Service that runs as a Windows background
 | Serial port | `System.IO.Ports.SerialPort` |
 | COM port detection | `System.IO.Ports.SerialPort.GetPortNames()` + WMI `Win32_PnPEntity` for VID/PID matching |
 | Configuration | `appsettings.json` + `IOptions<T>` |
-| Logging | `Microsoft.Extensions.Logging` → Windows Event Log |
+| Logging | `Microsoft.Extensions.Logging` → rolling file sink (no Windows Event Log -- that's a service-oriented sink; a per-user app logs to `%APPDATA%`) |
 | DI container | `Microsoft.Extensions.DependencyInjection` (built-in) |
 
 ---
@@ -32,7 +34,7 @@ The Windows Service is a .NET 9 Worker Service that runs as a Windows background
 ## 3. Project Structure
 
 ```
-MatricePadService/
+MatricePadApp/
 ├── Program.cs
 ├── appsettings.json
 ├── Worker.cs                         # Main BackgroundService loop
@@ -315,12 +317,11 @@ There is nothing analogous to the old `APPVOL:+/-` handling -- the Panel sends n
 
 ---
 
-## 12. Service Lifecycle
+## 12. App Lifecycle
 
-- Installed and managed via `sc.exe` or PowerShell `New-Service`
-- Start type: Automatic (delayed)
-- `UseWindowsService()` handles `OnStart`/`OnStop` integration
-- On `StopAsync`: signal the WinRT polling loop and audio capture loop to exit, dispose serial port and loopback capture cleanly
+- Registered by the installer as a Task Scheduler task with an "At log on" trigger, running as the interactive user (not SYSTEM) -- no elevation needed to run, only to register the task during install.
+- Runs as an ordinary user-mode process for the duration of the login session; exits on logoff (nothing needs to persist across logoff, per section 1).
+- On process exit (logoff, `Ctrl+C` if run interactively, or Task Scheduler stop): signal the WinRT polling loop and audio capture loop to exit, dispose serial port and loopback capture cleanly via `IHostApplicationLifetime`/`CancellationToken`.
 
 ---
 
@@ -328,7 +329,7 @@ There is nothing analogous to the old `APPVOL:+/-` handling -- the Panel sends n
 
 | Event | Level |
 |---|---|
-| Service start/stop | Information |
+| App start/stop | Information |
 | Serial connection established/lost | Information |
 | Serial reconnect attempts | Warning |
 | Packet sent (content change) | Debug |
@@ -340,4 +341,4 @@ There is nothing analogous to the old `APPVOL:+/-` handling -- the Panel sends n
 | Unhandled exceptions in loops | Error |
 | Lines received from Panel (diagnostic only, no commands) | Debug |
 
-Target: Windows Event Log (`Application` source `MatricePadService`) for Warning and above; optionally a rolling file sink for Debug in development.
+Target: a rolling file sink under `%APPDATA%\MatricePad\logs\` for Warning and above; optionally Debug in development. No Windows Event Log sink -- that's a service-oriented target and this runs per-user, not as a service.

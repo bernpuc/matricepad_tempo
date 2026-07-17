@@ -1,14 +1,14 @@
 # Product Requirements Document
 ## Matrice Pad Sound Panel
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Status:** Draft
 
 ---
 
 ## 1. Product Overview
 
-The Matrice Pad Sound Panel is a USB-connected hardware peripheral and companion software system that provides physical media playback controls and a real-time now-playing display for a Windows PC. The system consists of a custom ATmega32U4-based board (the **Panel**) and a background **Windows Service** running on the host PC. The Panel connects via USB-C, appears to Windows as both a USB serial device and a HID consumer control device, and requires no driver installation.
+The Matrice Pad Sound Panel is a USB-connected hardware peripheral and companion software system that provides physical media playback controls and a real-time now-playing display for a Windows PC. The system consists of a custom ATmega32U4-based board (the **Panel**) and a background **Windows App** running on the host PC. The Panel connects via USB-C, appears to Windows as both a USB serial device and a HID consumer control device, and requires no driver installation.
 
 ---
 
@@ -28,9 +28,9 @@ The system has two components that communicate over USB serial at 115200 baud.
 | Component | Platform | Role |
 |---|---|---|
 | Panel Firmware | ATmega32U4 (Arduino Pro Micro) | Drives display, reads controls, sends HID events |
-| Windows Service | Windows 10/11 | Polls audio state, sends display data to Panel |
+| Windows App | Windows 10/11 | Polls audio state, sends display data to Panel |
 
-The Panel is the HID authority for system volume and mute commands — it sends keystrokes directly to Windows via the HID consumer control interface, entirely independent of the Windows Service. The Windows Service is the data authority for media metadata, system volume level, mute state, and the frequency bar levels — it pushes all of this to the Panel over serial, unconditionally, every frame. The Panel sends nothing back to the Windows Service; there is no app-volume mode or other serial round-trip.
+The Panel is the HID authority for system volume and mute commands — it sends keystrokes directly to Windows via the HID consumer control interface, entirely independent of the Windows App. The Windows App is the data authority for media metadata, system volume level, mute state, and the frequency bar levels — it pushes all of this to the Panel over serial, unconditionally, every frame. The Panel sends nothing back to the Windows App; there is no app-volume mode or other serial round-trip.
 
 ---
 
@@ -61,7 +61,7 @@ Scrolling behavior: text pauses 2 seconds at each end, then scrolls at 40ms per 
 
 **5.1.2 Frequency Bar Graph View**
 
-An alternative full-screen view: 16 vertical bars spanning the display width, each reflecting a log-spaced frequency band's real-time level (0–100%), driven by WASAPI loopback capture and an FFT on the Windows Service side. Elapsed/duration (`M:SS/M:SS`) is shown in the upper-right corner when available (browser-based playback only — see 5.3). Toggled by the encoder button (5.2); mute/pause icons overlay this view exactly as they do the now-playing screen.
+An alternative full-screen view: 16 vertical bars spanning the display width, each reflecting a log-spaced frequency band's real-time level (0–100%), driven by WASAPI loopback capture and an FFT on the Windows App side. Elapsed/duration (`M:SS/M:SS`) is shown in the upper-right corner when available (browser-based playback only — see 5.3). Toggled by the encoder button (5.2); mute/pause icons overlay this view exactly as they do the now-playing screen.
 
 **5.1.3 Volume Overlay**
 
@@ -77,7 +77,7 @@ When playback is paused (and the system is not muted), the same 32×32 centred c
 
 **5.1.6 Connection Lost Screen**
 
-If no serial data is received from the Windows Service for 5 seconds, the display shows a "No connection / Awaiting update..." message.
+If no serial data is received from the Windows App for 5 seconds, the display shows a "No connection / Awaiting update..." message.
 
 **5.1.7 Waiting Screen**
 
@@ -98,7 +98,7 @@ On boot, the display shows "Waiting for data..." until the first valid serial pa
 |---|---|
 | Press button | Toggle the display between the now-playing text view and the frequency bar graph view (5.1.1 / 5.1.2). No banner — the full-screen content swap is its own feedback. |
 
-The encoder operates entirely independently of the Windows Service via HID; there is no app-volume mode or serial round-trip.
+The encoder operates entirely independently of the Windows App via HID; there is no app-volume mode or serial round-trip.
 
 **Keypad (2×2)**
 
@@ -109,13 +109,13 @@ The encoder operates entirely independently of the Windows Service via HID; ther
 | P | Bottom-left | MEDIA_PLAY_PAUSE |
 | F | Bottom-right | MEDIA_NEXT |
 
-Keypad controls always send standard HID consumer control events and function without the Windows Service running.
+Keypad controls always send standard HID consumer control events and function without the Windows App running.
 
 ---
 
-### 5.3 Windows Service — Media Metadata
+### 5.3 Windows App — Media Metadata
 
-The Windows Service determines the current track title and artist using a priority-based source selection evaluated each polling cycle:
+The Windows App determines the current track title and artist using a priority-based source selection evaluated each polling cycle:
 
 | Condition | Source | Method |
 |---|---|---|
@@ -142,9 +142,9 @@ The Windows Service determines the current track title and artist using a priori
 
 ---
 
-### 5.4 Windows Service — Audio State
+### 5.4 Windows App — Audio State
 
-The Windows Service polls for:
+The Windows App polls for:
 
 - **System master volume level** (0–100, integer) — from the default audio endpoint, polled frequently (sub-second) so the Panel's volume overlay (5.1.3) reflects a just-made adjustment rather than a stale value
 - **System mute state** (boolean) — from the default audio endpoint
@@ -153,9 +153,9 @@ Both are included in every serial packet sent to the Panel, which uses them to k
 
 ---
 
-### 5.5 Windows Service — Frequency Bar Graph
+### 5.5 Windows App — Frequency Bar Graph
 
-The Windows Service continuously captures the default output device's audio via WASAPI loopback and computes a 16-band log-spaced FFT spectrum for the Panel's bar graph view (5.1.2):
+The Windows App continuously captures the default output device's audio via WASAPI loopback and computes a 16-band log-spaced FFT spectrum for the Panel's bar graph view (5.1.2):
 
 - Capture in fixed-size chunks (~1024 samples), mixed to mono, Hann-windowed
 - FFT magnitude normalized against the window's energy, converted to dB, clamped to a fixed floor/ceiling and mapped to a 0–100 level per band
@@ -192,7 +192,7 @@ Sent on every content change, or as a keepalive every 2.5 seconds to prevent the
 
 ---
 
-### 5.7 Windows Service — Connection Management
+### 5.7 Windows App — Connection Management
 
 - **Auto-detection:** The Panel's USB VID:PID is used to automatically identify the correct COM port. Manual override is supported.
 - **Reconnection:** If the serial connection is lost, the service automatically retries with up to 5 attempts and 2-second delays between attempts, then continues retrying indefinitely.
@@ -202,9 +202,9 @@ Sent on every content change, or as a keepalive every 2.5 seconds to prevent the
 
 ## 6. Non-Functional Requirements
 
-- The Windows Service must run as a Windows Service (auto-start, no user session required after initial setup).
+- The Windows App must auto-start at user logon (Task Scheduler "At log on" trigger) and run for the duration of the login session; it is a per-user process, not a Windows Service, and does not need to run before login or across user switches.
 - CPU and memory usage must be low enough for continuous background operation on a typical desktop PC.
-- The Panel controls (HID volume, mute, media keys) must function independently of the Windows Service.
+- The Panel controls (HID volume, mute, media keys) must function independently of the Windows App.
 - No driver installation required; the Panel must enumerate as a standard HID + CDC composite device.
 
 ---

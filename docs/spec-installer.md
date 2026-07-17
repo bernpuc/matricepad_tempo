@@ -1,13 +1,13 @@
 # Software Specification: Windows Installer
 ## Matrice Pad Sound Panel
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
 ## 1. Overview
 
-The installer packages the Windows Service into a single downloadable `.exe` file. A user downloads it, double-clicks it, clicks through a standard wizard, and the service is installed and running. Uninstallation is handled through Windows **Add or Remove Programs** and removes all installed files and the service registration cleanly.
+The installer packages the Windows App into a single downloadable `.exe` file. A user downloads it, double-clicks it, clicks through a standard wizard, and the app is installed and registered to start at the next logon (and immediately, for the current session). The app is a **per-user process, not a Windows Service** (see `docs/spec-windows-app.md` §1 for why) — it runs in the interactive user's session, started via a Task Scheduler "At log on" trigger rather than the Service Control Manager. Uninstallation is handled through Windows **Add or Remove Programs** and removes all installed files and the scheduled task cleanly.
 
 ---
 
@@ -16,8 +16,8 @@ The installer packages the Windows Service into a single downloadable `.exe` fil
 **WiX Toolset v4** generating a standard Windows Installer (`.msi`) package, wrapped in a **WiX Bundle** (`.exe` bootstrapper).
 
 Rationale:
-- Native `ServiceInstall` and `ServiceControl` WiX elements handle service registration, start, stop, and removal without custom scripts.
 - MSI is the standard format for Windows enterprise environments and is handled correctly by Add or Remove Programs, Group Policy deployment, and silent install scenarios.
+- Scheduled task registration (section 6) is not a native WiX element the way `ServiceInstall` is for services, so it's done via a small custom action (`schtasks.exe` invocation or the Task Scheduler COM API) run at install/uninstall time — the trade-off accepted for moving off the Windows Service model.
 - Integrates cleanly with the .NET 9 publish pipeline (`dotnet publish` → WiX harvest → `.msi`).
 - Proper upgrade support via `UpgradeCode` GUID — reinstalling a newer version automatically removes the old one.
 
@@ -42,12 +42,12 @@ The distributed download is the **bundle `.exe`**, not the raw `.msi`.
 
 | File | Destination |
 |---|---|
-| `MatricePadService.exe` | `[ProgramFiles64Folder]\MatricePad\` |
+| `MatricePadApp.exe` | `[ProgramFiles64Folder]\MatricePad\` |
 | `appsettings.json` | `[ProgramFiles64Folder]\MatricePad\` |
 | All `.dll` dependencies | `[ProgramFiles64Folder]\MatricePad\` |
 | Uninstall entry | Windows Add or Remove Programs |
 
-No desktop shortcut. No Start Menu entry. The service runs silently in the background.
+No desktop shortcut. No Start Menu entry. The app runs silently in the background, started by its scheduled task (section 6) at logon.
 
 `appsettings.json` is marked as a **non-versioned configuration file**: upgrades do not overwrite it if it already exists, preserving any user configuration (e.g. a manually set `ComPort`).
 
@@ -57,27 +57,28 @@ No desktop shortcut. No Start Menu entry. The service runs silently in the backg
 
 Default: `C:\Program Files\MatricePad\`
 
-The installer does not offer a directory picker. The install location is fixed to `Program Files` to ensure the service binary is in a UAC-protected location.
+The installer does not offer a directory picker. The install location is fixed to `Program Files` to ensure the app binary is in a UAC-protected location, even though the app itself runs per-user rather than as SYSTEM.
 
 ---
 
-## 6. Windows Service Registration
+## 6. Scheduled Task Registration
 
-Registered via WiX `ServiceInstall` element:
+Registered via a custom action invoking `schtasks.exe` (or the Task Scheduler COM API) during the WiX install sequence, targeting the **current interactive user** — not `LocalSystem`:
 
 | Property | Value |
 |---|---|
-| Service name | `MatricePadService` |
-| Display name | `Matrice Pad Sound Panel` |
-| Description | `Sends now-playing audio information to the Matrice Pad hardware panel.` |
-| Start type | Automatic (delayed start) |
-| Account | `LocalSystem` |
-| Error control | Normal |
+| Task name | `MatricePadApp` |
+| Trigger | At log on, current user |
+| Action | Run `MatricePadApp.exe` from the install directory |
+| Run level | Least privilege (no elevation — the app needs no admin rights at runtime) |
+| Settings | Do not stop on battery, restart on failure (e.g. up to 3 times, 1-minute intervals) |
 
-WiX `ServiceControl` elements:
-- **On install:** start the service after installation completes
-- **On uninstall:** stop the service before file removal
-- **On upgrade:** stop the service before upgrade, start it after
+Install/uninstall/upgrade custom actions:
+- **On install:** register the task, then launch `MatricePadApp.exe` immediately so it's running for the current session without requiring a fresh logon
+- **On uninstall:** stop the running process (if any) and delete the scheduled task
+- **On upgrade:** stop the running process, delete and re-register the task, relaunch
+
+Because the task is registered per-user (not machine-wide), an installer run under one Windows account only starts the app for that account; a shared/multi-user PC would need the installer re-run (or the task re-registered) under each account that wants the Panel active — acceptable given the target use case (a single user's own desktop).
 
 ---
 
@@ -103,13 +104,13 @@ Version number in the MSI `Product` element must be incremented on every release
 Triggered from Windows **Add or Remove Programs** → **Matrice Pad Sound Panel** → **Uninstall**.
 
 Uninstall sequence:
-1. Stop the `MatricePadService` Windows Service
-2. Delete the service registration
+1. Stop the running `MatricePadApp.exe` process, if any
+2. Delete the `MatricePadApp` scheduled task
 3. Remove all installed files from `[ProgramFiles64Folder]\MatricePad\`
 4. Remove the install directory if empty
 5. Remove the Add or Remove Programs entry
 
-`appsettings.json` is removed on uninstall. There is no separate user data to clean up as the service writes nothing outside its install directory.
+`appsettings.json` is removed on uninstall. Log files under `%APPDATA%\MatricePad\logs\` (per-user, outside the install directory — see `docs/spec-windows-app.md` §2) are left in place; nothing else needs cleanup.
 
 No reboot is required for install or uninstall.
 
@@ -155,7 +156,7 @@ msiexec /x MatricePadSoundPanel.msi /quiet /norestart
 **Recommended** before public distribution:
 
 - Sign the `.exe` bundle and the `.msi` with an Authenticode certificate (EV certificate preferred to avoid Windows SmartScreen warnings on first download)
-- Sign `MatricePadService.exe`
+- Sign `MatricePadApp.exe`
 - Signing is a build pipeline step, not a WiX concern
 
 Without code signing, Windows SmartScreen will display an "Unknown publisher" warning when the user runs the installer. This is acceptable for initial development builds.

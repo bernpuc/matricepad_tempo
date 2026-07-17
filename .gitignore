@@ -1,3 +1,7 @@
 .venv310/
 __pycache__/
 *.pyc
+
+bin/
+obj/
+publish/
