@@ -26,7 +26,7 @@ using namespace TempoCore;
 //   Rows 0–1: song title word-wrapped (static)
 //   Row 2:    artist name (scrolls when > 21 chars)
 //   Better for long titles that would otherwise scroll constantly.
-#define DISPLAY_LINES 3
+#define DISPLAY_LINES 2
 
 // ── OLED ──────────────────────────────────────────────────────────────────────
 #define SCREEN_WIDTH  128
