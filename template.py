@@ -5,6 +5,9 @@ WinRT library returns song and artist info when playing audio from a streaming s
 within a browser window.
 Audio players that display song and artist info in the window title bar are supported
 using the pycaw library.
+
+Also captures WASAPI loopback audio for the frequency bar graph shown on the Arduino's
+BARS view (toggled by the encoder button) -- see CLAUDE.md for the serial protocol.
 '''
 import argparse
 import threading
@@ -14,29 +17,19 @@ from pycaw.pycaw import AudioUtilities
 from serial.serialutil import SerialException
 
 import tempo_core.debug as debug
-from tempo_core import audio_state, media_sources, serial_link
+from tempo_core import audio_capture, audio_state, media_sources, serial_link
 from tempo_core.debug import debugPrint
 
 
 def handle_serial_input(ser):
     while ser.in_waiting:
         line = ser.readline().decode('utf-8').strip()
-        if not line:
-            continue
-        if line in ("APPVOL:+", "APPVOL:-"):
-            session = audio_state.get_active_audio_session()
-            if session:
-                step = 0.02
-                current = session.SimpleAudioVolume.GetMasterVolume()
-                new_vol = max(0.0, min(1.0, current + (step if line == "APPVOL:+" else -step)))
-                session.SimpleAudioVolume.SetMasterVolume(new_vol, None)
-                audio_state.force_app_volume_refresh()
-                debugPrint(f"[Arduino -> PC] App volume set to {int(new_vol * 100)}%")
-        else:
+        if line:
             print(f"[Arduino] {line}")
 
 
-def get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted, app_volume):
+def get_serial_packet(window_title, media_info, last_playing):
+    """Returns sanitized (song, artist, paused) for the given media source state."""
     song = ""
     artist = ""
     paused = 0
@@ -63,12 +56,12 @@ def get_serial_packet(window_title, media_info, last_playing, current_volume, is
         song, artist = media_sources.get_title_song(window_title)
         if artist == "": artist = window_title
 
-    serial_output = (
-        f"{media_sources.to_ascii(song.strip())}||{media_sources.to_ascii(artist.strip())}"
-        f"||{current_volume}||{1 if is_muted else 0}||{app_volume}||{paused}\n"
-    )
-    debugPrint(serial_output)
-    return serial_output
+    return media_sources.to_ascii(song.strip()), media_sources.to_ascii(artist.strip()), paused
+
+
+def build_frame(song, artist, volume, is_muted, paused, bar_levels, elapsed_sec, duration_sec):
+    bars_csv = ",".join(str(v) for v in bar_levels)
+    return f"{song}||{artist}||{volume}||{1 if is_muted else 0}||{paused}||{bars_csv}||{elapsed_sec}||{duration_sec}\n"
 
 
 def send_packet(ser, serial_packet: str):
@@ -85,9 +78,15 @@ def main(port: str | None):
     # Set up audio device and volume interface
     devices = AudioUtilities.GetSpeakers()
     volume_i = devices.EndpointVolume
-    # Start background thread to update media info
+    # Start background threads for media info and audio capture. Staggered on
+    # purpose: each does its own first-time COM initialization (WinRT here,
+    # soundcard/WASAPI in audio_capture), and starting them at the same
+    # instant is a real crash (observed SIGSEGV) -- letting one finish its
+    # init before the other starts avoids the race.
     stop_event = threading.Event()
     media_sources.start_media_info_thread(stop_event)
+    time.sleep(1)
+    audio_capture.start_capture_thread(stop_event)
 
     try:
         while True:
@@ -104,14 +103,20 @@ def main(port: str | None):
                 # Check incoming serial
                 handle_serial_input(global_ser)
                 # Get audio settings
-                current_volume, is_muted, app_volume = audio_state.get_audio_settings(volume_i)
+                current_volume, is_muted, _app_volume_unused = audio_state.get_audio_settings(volume_i)
                 # Get window_title
                 window_title = media_sources.get_window_title()
                 # Get media_info
                 media_info = media_sources.get_shared_media_info()
                 last_playing = media_sources.get_last_playing_media_info()
+                # Get bar levels and elapsed/duration for the BARS view
+                bar_levels = audio_capture.get_bar_levels()
+                elapsed_sec  = media_sources.get_smoothed_elapsed(media_info)
+                duration_sec = media_info.get("duration_sec", 0) if media_info else 0
                 # Assemble serial packet
-                serial_packet = get_serial_packet(window_title, media_info, last_playing, current_volume, is_muted, app_volume)
+                song, artist, paused = get_serial_packet(window_title, media_info, last_playing)
+                serial_packet = build_frame(song, artist, current_volume, is_muted, paused,
+                                             bar_levels, elapsed_sec, duration_sec)
                 # Send when content changed or keepalive interval elapsed (Arduino timeout = 5s)
                 now = time.monotonic()
                 if serial_packet != last_packet or now - last_send_time >= 2.5:
@@ -131,7 +136,7 @@ def main(port: str | None):
                 # Consider if this error also warrants closing the serial port
                 # For now, it will likely be caught by the next SerialException if it affects serial comms
 
-            time.sleep(0.2)
+            time.sleep(0.05)
 
     except KeyboardInterrupt:
         debugPrint("\nShutting down gracefully.")

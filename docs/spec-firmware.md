@@ -1,7 +1,7 @@
 # Software Specification: Panel Firmware
 ## Matrice Pad Sound Panel — ATmega32U4
 
-**Version:** 1.1
+**Version:** 1.2
 
 ---
 
@@ -47,6 +47,7 @@ The marquee scroll engine, status-icon/overlay drawing, and `\|\|`-delimited ser
 | `ScrollText.h` | `LineScroll` struct, `resetScroll()`, `tickScroll()` |
 | `StatusIcons.h` | `drawCircleIcon()`, `applyMuteContrast()`, `showOverlayBanner()` |
 | `SerialFraming.h` | `findSep()`, `trimInPlace()`, `copyField()`, `splitTitleIntoLines()` |
+| `RotaryEncoder.h` | `EncoderState` struct, `initEncoderState()`, `tickEncoder()` (debounced quadrature rotation) |
 
 Building/uploading requires resolving this library path explicitly — via `arduino/build.ps1` (wraps `arduino-cli` with `--libraries arduino/libraries`), or by linking `TempoCore` into the Arduino IDE's sketchbook `libraries/` folder. See the README for both paths.
 
@@ -60,9 +61,12 @@ Building/uploading requires resolving this library path explicitly — via `ardu
 | `SCROLL_PAUSE_MS` | `2000` | Milliseconds to pause at each scroll end |
 | `SCROLL_STEP_MS` | `40` | Milliseconds between scroll pixel steps |
 | `TIMEOUT` | `5000` | Milliseconds before connection-lost screen |
-| `MAX_SERIAL_BUFFER` | `256` | Maximum serial input buffer size in bytes |
+| `MAX_SERIAL_BUFFER` | `384` | Maximum serial input buffer size in bytes (bumped from 256 to fit the bars sub-field) |
 | `ENCODER_DEBOUNCE_MS` | `10` | Encoder debounce window in milliseconds |
 | `debounceDelay` | `50` | Button debounce window in milliseconds |
+| `NUM_BARS` | `16` | Frequency bars in the BARS view |
+| `BAR_WIDTH` / `BAR_GAP` | `6` / `2` | Bar width and gap in pixels (8px slot × 16 = 128px) |
+| `TIME_CHAR_WIDTH_PX` | `6` | Char width for the BARS view's elapsed/duration text (textSize 1) |
 
 ---
 
@@ -73,8 +77,9 @@ Building/uploading requires resolving this library path explicitly — via `ardu
 | `isMuted` | `bool` | Current mute state, synced from Windows Service |
 | `isPaused` | `bool` | Current pause state, synced from Windows Service |
 | `volume` | `int` | Last system volume received from Windows Service (0–100) |
-| `appVolume` | `int` | Last active application volume received from Windows Service (0–100) |
-| `currentMode` | `VolumeMode` | Encoder mode: `SYSTEM_VOL` or `APP_VOL`; defaults to `SYSTEM_VOL` on boot |
+| `currentDisplayMode` | `DisplayMode` | `MODE_TEXT` or `MODE_BARS`; toggled by the encoder button, defaults to `MODE_TEXT` on boot |
+| `barLevels[16]` | `int[]` | Frequency bar levels (0–100), received from the PC |
+| `elapsedSec` / `durationSec` | `int` | WinRT-only; both 0 when no timeline is available |
 | `connected` | `bool` | True when serial data has been received within TIMEOUT |
 | `line1` | `String` | Track title (2-line mode), or title line 1 (3-line mode) |
 | `line2` | `String` | Title line 2 (3-line mode only) |
@@ -91,7 +96,7 @@ Building/uploading requires resolving this library path explicitly — via `ardu
 | `lastDebounceTime` | `unsigned long` | Last encoder button edge timestamp |
 | `lastUpdateTime` | `unsigned long` | Timestamp of last valid serial packet |
 
-`VolumeMode` is an enum: `SYSTEM_VOL = 0`, `APP_VOL = 1`.
+`DisplayMode` is an enum: `MODE_TEXT = 0`, `MODE_BARS = 1`.
 
 ---
 
@@ -112,6 +117,13 @@ Building/uploading requires resolving this library path explicitly — via `ardu
 - Row 2 at Y=20: artist, scrolls horizontally
 - `CHAR_WIDTH_PX = 6`
 - Word-wrap algorithm: find the last space at or before character position `DISPLAY_CHARS_PER_LINE` (21). If no space found, hard-truncate with `...` at position 18.
+
+### 6.3 BARS View (`currentDisplayMode == MODE_BARS`)
+
+- 16 vertical bars spanning the full 128×32 screen, each an 8px slot (6px `fillRect` bar + 2px gap), height = `barLevels[i] * 32 / 100`, growing bottom-up
+- Elapsed/duration text (`M:SS/M:SS`) at textSize 1, right-aligned in the upper-right corner, drawn only when `durationSec > 0`
+- Mute/pause icon drawn on top exactly as in TEXT mode
+- Toggled by the encoder button (`handleDisplayModeButton()`); a shared `drawCurrentView()` dispatcher picks TEXT or BARS so every state-change handler (serial input, mute, volume overlay) redraws whichever view is active without needing mode-specific logic
 
 ---
 
@@ -136,27 +148,18 @@ In 3-line mode: `scroll[0]` = artist only.
 
 ## 8. Serial Protocol — Receive
 
-Format: `song||artist||volume||muted||appvolume||paused\n` (ASCII, newline-terminated)
+Format: `song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSec\n` (ASCII, newline-terminated)
 
 Parsing on receipt of `\n`:
-1. Find `firstSep` = index of first `||`
-2. Find `secondSep` = index of second `||` (search from `firstSep + 2`)
-3. Find `thirdSep` = index of third `||` (search from `secondSep + 2`)
-4. Find `fourthSep` = index of fourth `||` (search from `thirdSep + 2`)
-5. Find `fifthSep` = index of fifth `||` (search from `fourthSep + 2`)
-6. Reject packet if any separator is missing
-7. Extract:
-   - `songTitle` = `inputBuffer[0 .. firstSep)`
-   - `newArtist` = `inputBuffer[firstSep+2 .. secondSep)`
-   - `volume` = `inputBuffer[secondSep+2 .. thirdSep)` as int
-   - `newMuted` = `inputBuffer[thirdSep+2 .. fourthSep)` as int, non-zero = true
-   - `appVolume` = `inputBuffer[fourthSep+2 .. fifthSep)` as int
-   - `isPaused` = `inputBuffer[fifthSep+2 ..]` as int, non-zero = true
-8. Trim `songTitle`
-9. Update display strings: if `songTitle != line1`, set `line1 = songTitle` and `resetScroll(scroll[0])`; same for artist
-10. Update mute state: if `newMuted != isMuted`, set `isMuted = newMuted` and call `applyMuteContrast()`
-11. Set `connected = true`, `lastUpdateTime = millis()`
-12. Trigger `drawMediaDisplay()` if neither `volumeBeingAdjusted` nor `muteDisplayed`
+1. Find 7 `||` separators the same way as before (each search starting 2 chars past the previous one), isolating 8 fields: `songTitle`, `newArtist`, `volume`, `newMuted`, `isPaused`, `barsBlob`, `elapsedSec`, `durationSec`
+2. Reject packet if any separator is missing
+3. Extract `volume`, `newMuted` (non-zero = true), `isPaused` (non-zero = true), `elapsedSec`, `durationSec` as ints
+4. Trim `songTitle`
+5. Update display strings: if `songTitle != line1`, set `line1 = songTitle` and `resetScroll(scroll[0])`; same for artist
+6. Update mute state: if `newMuted != isMuted`, set `isMuted = newMuted` and call `applyMuteContrast()`
+7. Tokenize `barsBlob` on `,` (`strtok`, up to 16 tokens) into `barLevels[16]`, clamped to `[0, 100]`
+8. Set `connected = true`, `lastUpdateTime = millis()`
+9. Trigger `drawCurrentView()` if no overlay is active (updates whichever view -- TEXT or BARS -- is currently on-screen; the other view's underlying data is still refreshed above regardless)
 
 Buffer management: append each received character to `inputBuffer` up to `MAX_SERIAL_BUFFER`. Clear buffer on each `\n`.
 
@@ -166,47 +169,39 @@ Buffer management: append each received character to `inputBuffer` up to `MAX_SE
 
 All HID events use the HID-Project `Consumer` interface.
 
-| Trigger | Condition | HID Event |
-|---|---|---|
-| Encoder turn clockwise | `currentMode == SYSTEM_VOL` | `MEDIA_VOLUME_UP` |
-| Encoder turn counter-clockwise | `currentMode == SYSTEM_VOL` | `MEDIA_VOLUME_DOWN` |
-| Keypad M | — | `MEDIA_VOLUME_MUTE` |
-| Keypad R | — | `MEDIA_PREVIOUS` |
-| Keypad P | — | `MEDIA_PLAY_PAUSE` |
-| Keypad F | — | `MEDIA_NEXT` |
+| Trigger | HID Event |
+|---|---|
+| Encoder turn clockwise | `MEDIA_VOLUME_UP` |
+| Encoder turn counter-clockwise | `MEDIA_VOLUME_DOWN` |
+| Keypad M | `MEDIA_VOLUME_MUTE` |
+| Keypad R | `MEDIA_PREVIOUS` |
+| Keypad P | `MEDIA_PLAY_PAUSE` |
+| Keypad F | `MEDIA_NEXT` |
 
-When `currentMode == APP_VOL`, encoder turns send serial messages instead of HID events (see section 10).
+System-volume-only -- there is no app-volume mode or serial round-trip for encoder turns (see section 11 for what the encoder button does instead).
 
 ---
 
 ## 10. Encoder Handling
 
-Edge detection on CLK pin (falling edge = HIGH→LOW transition).
+Edge detection on CLK pin (falling edge = HIGH→LOW transition), via `TempoCore::tickEncoder()`.
 
 On falling edge (with debounce `ENCODER_DEBOUNCE_MS`):
 - Read DT pin; determine direction (`clockwise = DT == CLK`)
-- **System volume mode** (`currentMode == SYSTEM_VOL`):
-  - Clockwise → `Consumer.write(MEDIA_VOLUME_UP)`
-  - Counter-clockwise → `Consumer.write(MEDIA_VOLUME_DOWN)`
-  - Draw overlay: `Vol: XX%` using `volume`
-- **App volume mode** (`currentMode == APP_VOL`):
-  - Clockwise → `Serial.println("APPVOL:+")`
-  - Counter-clockwise → `Serial.println("APPVOL:-")`
-  - Draw overlay: `App: XX%` using `appVolume`
-- Set `volumeBeingAdjusted = true`, `lastEncoderAdjustTime = millis()`
+- Clockwise → `Consumer.write(MEDIA_VOLUME_UP)`; counter-clockwise → `Consumer.write(MEDIA_VOLUME_DOWN)`
+- Draw overlay: `Vol: XX%` using `volume`, over whichever view (TEXT or BARS) is currently active
 
-Volume overlay clears after 1000ms of no encoder activity.
+Volume overlay clears after 1000ms.
 
 ---
 
 ## 11. Encoder Button Handling
 
 Debounce using `debounceDelay` (50ms). On confirmed press (LOW edge):
-- Toggle `currentMode`: `SYSTEM_VOL` ↔ `APP_VOL`
-- Draw mode overlay: `SYS VOL` or `APP VOL`, textSize 2, cursor at (4, 8)
-- Set `muteDisplayed = true`, `muteDisplayStart = millis()`
+- Toggle `currentDisplayMode`: `MODE_TEXT` ↔ `MODE_BARS`
+- Clear any active overlay and call `drawCurrentView()` immediately
 
-Mode overlay clears after 1000ms.
+No banner -- swapping the whole screen's content between TEXT and BARS is its own obvious feedback.
 
 ---
 
@@ -260,10 +255,10 @@ If `millis() - lastUpdateTime > TIMEOUT` and `connected == true`:
 ## 16. Main Loop Order
 
 Each iteration of `loop()`:
-1. Process serial input (read all available bytes)
-2. Encoder button debounce and press detection
-3. Clear mute overlay if 1000ms elapsed
-4. Encoder rotation detection
-5. Clear volume overlay if 1000ms of no encoder activity
-6. Scroll tick (only when `connected`, not adjusting volume, not in mute overlay)
-7. Connection timeout check
+1. Process serial input (read all available bytes; updates both views' underlying data)
+2. Encoder button: debounce, press detection, TEXT/BARS toggle
+3. Encoder rotation detection (volume overlay)
+4. Clear volume overlay if 1000ms elapsed
+5. Scroll tick (TEXT mode only, when `connected` and no overlay active)
+6. Connection timeout check
+7. Keypad scan (mute/prev/play-pause/next)

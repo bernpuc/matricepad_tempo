@@ -13,8 +13,10 @@ MatricePad Tempo is a two-component embedded system:
 
 Shared logic lives in two places so feature-specific variants (e.g. a duration/elapsed-time display, a frequency bar graph) can be added as their own sketch/script pair without duplicating the boring 80%:
 
-- **`arduino/libraries/TempoCore/`** — an in-repo Arduino library (not the sketchbook). Holds `ScrollText` (the marquee scroll engine), `StatusIcons` (mute/pause circle glyph + overlay banner drawing), and `SerialFraming` (null-terminated `\|\|`-delimited field parsing). `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` is the baseline sketch built on top of it; future feature sketches go in sibling folders under `arduino/` and `#include <TempoCore.h>` the same way.
-- **`tempo_core/`** (Python package at repo root) — `serial_link.py` (port discovery/connection), `audio_state.py` (pycaw volume/session polling), `media_sources.py` (WinRT + window-title parsing), `debug.py` (shared `DEBUG`/`debugPrint`). `template.py` is the baseline entrypoint built on top of it; future feature scripts (e.g. `duration_main.py`) live alongside it at repo root and import from `tempo_core` the same way.
+- **`arduino/libraries/TempoCore/`** — an in-repo Arduino library (not the sketchbook). Holds `ScrollText` (the marquee scroll engine), `StatusIcons` (mute/pause circle glyph + overlay banner drawing), `SerialFraming` (null-terminated `\|\|`-delimited field parsing), and `RotaryEncoder` (debounced quadrature rotation detection). `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` is the baseline sketch built on top of it; `arduino/matrice_pad_tempo_spectrum/` is a standalone bars-only sketch built the same way; future feature sketches go in sibling folders under `arduino/` and `#include <TempoCore.h>` the same way.
+- **`tempo_core/`** (Python package at repo root) — `serial_link.py` (port discovery/connection), `audio_state.py` (pycaw volume/session polling), `media_sources.py` (WinRT + window-title parsing, plus `get_smoothed_elapsed()` for the position stair-step described below), `audio_capture.py` (WASAPI loopback capture + FFT → bar levels), `debug.py` (shared `DEBUG`/`debugPrint`). `template.py` is the baseline entrypoint built on top of it (both media info and audio capture); `spectrum_main.py` is a standalone bars-only entrypoint; future feature scripts live alongside them at repo root and import from `tempo_core` the same way.
+
+**COM threading gotcha:** `audio_capture.py` (soundcard/WASAPI) and `media_sources.py` (WinRT) each do their own first-time COM initialization on their own background thread. Starting both threads at the same instant is a real crash (observed SIGSEGV) — always stagger their `start_*_thread()` calls by ~1s, as both `template.py` and `spectrum_main.py` do. Separately, `audio_capture.py` imports `comtypes` before `soundcard` so the COM apartment mode (STA vs MTA) is claimed by `comtypes` first regardless of what else imports `soundcard` later.
 
 Because `arduino-cli` doesn't resolve libraries outside the sketchbook by default, compile/upload through `arduino/build.ps1` (wraps `arduino-cli` with `--libraries arduino/libraries`) rather than a bare `arduino-cli compile`/`upload`:
 
@@ -25,15 +27,27 @@ Because `arduino-cli` doesn't resolve libraries outside the sketchbook by defaul
 
 ## Serial Protocol
 
-Messages are newline-terminated (`\n`).
+Messages are newline-terminated (`\n`), sent PC → Arduino only (the baseline sketch's encoder button no longer round-trips app-volume commands — see below).
 
-| Direction   | Format                          | Meaning                               |
-|-------------|----------------------------------|---------------------------------------|
-| PC → Arduino | `song\|\|artist\|\|volume\n`   | Media title, artist string, volume 0–100 |
-| Arduino → PC | `VOL:<0-100>\n`                 | User adjusted volume via encoder      |
-| Arduino → PC | `MUTE\n`                        | User pressed encoder button           |
+**Baseline sketch** (`matrice_pad_tempo.ino` / `template.py`):
+```
+song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSec
+```
+| Field | Meaning |
+|---|---|
+| `song`, `artist` | ASCII-sanitized media title/artist, may be empty |
+| `volume` | System master volume, 0–100 |
+| `muted` | `0`/`1` |
+| `paused` | `0`/`1`, real PC-reported playback status |
+| `bar0..bar15` | 16 frequency-bar levels, each 0–100, comma-joined sub-field |
+| `elapsedSec`, `durationSec` | WinRT-only; both `0` when no timeline is available (non-browser source, nothing playing) |
 
-The Arduino only syncs `encoderPosition` from the first valid PC message (`volumeInitialized` flag).
+The encoder button toggles the Arduino between a **TEXT** view (song/artist, scrolling) and a **BARS** view (the 16-bar graph + elapsed/duration in the upper-right) — both are always kept up to date from the same packet regardless of which is on-screen.
+
+**Spectrum sketch** (`matrice_pad_tempo_spectrum.ino` / `spectrum_main.py`) — standalone, bars-only, simpler wire format with no song/artist/volume fields:
+```
+bar0,bar1,...,bar15,elapsedSec,durationSec
+```
 
 ## Running the Python Script
 

@@ -36,8 +36,21 @@ using namespace TempoCore;
 #define OLED_SCL         3
 // 128px / 6px-per-char (5px glyph + 1px spacing) = 21 chars at text size 1
 #define DISPLAY_CHARS_PER_LINE 21
-#define MAX_SERIAL_BUFFER     256
+// Bumped from 256: worst case is two ~95-char title/artist fields plus the
+// bars sub-field and separators, which can approach ~290 bytes.
+#define MAX_SERIAL_BUFFER     384
 #define MAX_FIELD_LEN          96
+
+// ── Bar layout (BARS view) ────────────────────────────────────────────────────
+// 16 bars * 8px slot (6px bar + 2px gap) = 128px, exactly fills the screen width.
+// Same constants as the standalone spectrum sketch.
+#define NUM_BARS    16
+#define BAR_WIDTH    6
+#define BAR_GAP      2
+#define BAR_SLOT    (BAR_WIDTH + BAR_GAP)
+// textSize 1 (8px tall, 5px glyph + 1px spacing = 6px wide per char) for the
+// elapsed/duration overlay, upper-right corner.
+#define TIME_CHAR_WIDTH_PX 6
 
 // ── Row y-positions ───────────────────────────────────────────────────────────
 #if DISPLAY_LINES == 2
@@ -69,22 +82,18 @@ const unsigned long ENCODER_DEBOUNCE_MS = 10;
 char inputBuffer[MAX_SERIAL_BUFFER];
 int  inputLen = 0;
 
-int volume    = 0;
-int appVolume = 0;
+int volume = 0;
 
 unsigned long lastUpdateTime = 0;
 const unsigned long TIMEOUT = 5000;
 bool connected = false;
 
 // ── Transient overlay state ───────────────────────────────────────────────────
-// A single active "overlay" replaces the media display for a fixed duration
-// (volume readout or SYS/APP mode banner), then reverts. Mute has no banner --
-// the mute icon already shows that state, so a redundant "MUTE"/"UNMUTE" text
-// overlay would just be noise. Only one overlay can be showing at a time —
-// raising a new one simply replaces whichever was active, which is exactly
-// what happened by accident before this was unified (whichever handler drew
-// last "won" the screen anyway).
-enum OverlayKind { OVERLAY_NONE, OVERLAY_VOLUME, OVERLAY_MODE };
+// A single active "overlay" (the volume readout) replaces the current view for
+// a fixed duration, then reverts. Mute has no banner -- the mute icon already
+// shows that state -- and the display-mode toggle has no banner either, since
+// switching the whole screen's content is its own obvious feedback.
+enum OverlayKind { OVERLAY_NONE, OVERLAY_VOLUME };
 OverlayKind   activeOverlay    = OVERLAY_NONE;
 unsigned long overlayStart     = 0;
 unsigned long overlayDurationMs = 0;
@@ -96,8 +105,13 @@ char artist[MAX_FIELD_LEN] = "";
 bool isMuted  = false;
 bool isPaused = false;
 
-enum VolumeMode { SYSTEM_VOL, APP_VOL };
-VolumeMode currentMode = SYSTEM_VOL;
+// ── Display mode (encoder button toggles between them) ────────────────────────
+enum DisplayMode { MODE_TEXT, MODE_BARS };
+DisplayMode currentDisplayMode = MODE_TEXT;
+
+int barLevels[NUM_BARS] = {0};   // each 0-100, received from the PC
+int elapsedSec  = 0;             // seconds; both 0 when no WinRT timeline available
+int durationSec = 0;
 
 // ── Scroll state ──────────────────────────────────────────────────────────────
 #if DISPLAY_LINES == 2
@@ -157,6 +171,50 @@ void drawMediaDisplay() {
     display.display();
 }
 
+// Draws the 16-bar frequency graph plus an elapsed/duration readout in the
+// upper-right corner (skipped when durationSec is 0 -- no WinRT timeline
+// available). Same layout as the standalone spectrum sketch.
+void drawBars() {
+    display.clearDisplay();
+    for (int i = 0; i < NUM_BARS; i++) {
+        int barHeightPx = (barLevels[i] * SCREEN_HEIGHT) / 100;
+        if (barHeightPx > 0) {
+            int x = i * BAR_SLOT;
+            display.fillRect(x, SCREEN_HEIGHT - barHeightPx, BAR_WIDTH, barHeightPx, SSD1306_WHITE);
+        }
+    }
+
+    if (durationSec > 0) {
+        char timeText[16];
+        snprintf(timeText, sizeof(timeText), "%d:%02d/%d:%02d",
+                 elapsedSec / 60, elapsedSec % 60, durationSec / 60, durationSec % 60);
+        int textWidthPx = (int)strlen(timeText) * TIME_CHAR_WIDTH_PX;
+        int x = SCREEN_WIDTH - textWidthPx;
+        if (x < 0) x = 0;
+        display.setTextSize(1);
+        display.setCursor(x, 0);
+        display.println(timeText);
+    }
+
+    if (isMuted) {
+        TempoCore::drawCircleIcon(display, true);
+    } else if (isPaused) {
+        TempoCore::drawCircleIcon(display, false);
+    }
+    display.display();
+}
+
+// Draws whichever view is currently active. All state-change handlers call
+// this instead of drawMediaDisplay()/drawBars() directly, so both views stay
+// live under the hood regardless of which one is on-screen.
+void drawCurrentView() {
+    if (currentDisplayMode == MODE_TEXT) {
+        drawMediaDisplay();
+    } else {
+        drawBars();
+    }
+}
+
 // Draws a full-screen single-line banner and marks it as the active overlay
 // for durationMs. checkOverlayTimeout() reverts to drawMediaDisplay() once
 // that time has elapsed. Used for the volume readout, mute/unmute banner, and
@@ -206,23 +264,26 @@ void setup() {
 // Each function owns one independent concern of loop(). They communicate only
 // through the globals declared above — no parameters are passed between them.
 
-// Reads and parses "song||artist||volume||muted||appVolume||paused" lines from
-// the PC, updating display/volume/mute/pause state on a complete message.
+// Reads and parses "song||artist||volume||muted||paused||bar0,...,bar15||
+// elapsedSec||durationSec" lines from the PC, updating display/volume/mute/
+// pause/bars/elapsed/duration state on a complete message.
 void handleSerialInput() {
     while (Serial.available()) {
         char c = Serial.read();
         if (c == '\n') {
             inputBuffer[inputLen] = '\0';
 
-            char *pTitle  = inputBuffer;
-            char *pArtist = nullptr;
-            char *pVolume = nullptr;
-            char *pMuted  = nullptr;
-            char *pAppVol = nullptr;
-            char *pPaused = nullptr;
+            char *pTitle    = inputBuffer;
+            char *pArtist   = nullptr;
+            char *pVolume   = nullptr;
+            char *pMuted    = nullptr;
+            char *pPaused   = nullptr;
+            char *pBars     = nullptr;
+            char *pElapsed  = nullptr;
+            char *pDuration = nullptr;
 
             char *sep1 = findSep(pTitle);
-            char *sep2 = nullptr, *sep3 = nullptr, *sep4 = nullptr, *sep5 = nullptr;
+            char *sep2 = nullptr, *sep3 = nullptr, *sep4 = nullptr, *sep5 = nullptr, *sep6 = nullptr, *sep7 = nullptr;
             if (sep1) {
                 *sep1 = '\0';
                 pArtist = sep1 + 2;
@@ -240,18 +301,27 @@ void handleSerialInput() {
             }
             if (sep4) {
                 *sep4 = '\0';
-                pAppVol = sep4 + 2;
-                sep5 = findSep(pAppVol);
+                pPaused = sep4 + 2;
+                sep5 = findSep(pPaused);
             }
             if (sep5) {
                 *sep5 = '\0';
-                pPaused = sep5 + 2;
+                pBars = sep5 + 2;
+                sep6 = findSep(pBars);
+            }
+            if (sep6) {
+                *sep6 = '\0';
+                pElapsed = sep6 + 2;
+                sep7 = findSep(pElapsed);
+            }
+            if (sep7) {
+                *sep7 = '\0';
+                pDuration = sep7 + 2;
             }
 
-            if (pPaused != nullptr) {
+            if (pDuration != nullptr) {
                 volume    = atoi(pVolume);
                 bool newMuted = atoi(pMuted) != 0;
-                appVolume = atoi(pAppVol);
                 isPaused  = atoi(pPaused) != 0;
                 if (newMuted != isMuted) {
                     isMuted = newMuted;
@@ -280,8 +350,19 @@ void handleSerialInput() {
                 }
 #endif
 
+                char *token = strtok(pBars, ",");
+                for (int i = 0; i < NUM_BARS && token != nullptr; i++) {
+                    int level = atoi(token);
+                    if (level < 0) level = 0;
+                    if (level > 100) level = 100;
+                    barLevels[i] = level;
+                    token = strtok(nullptr, ",");
+                }
+                elapsedSec  = atoi(pElapsed);
+                durationSec = atoi(pDuration);
+
                 if (activeOverlay == OVERLAY_NONE) {
-                    drawMediaDisplay();
+                    drawCurrentView();
                 }
 
                 connected      = true;
@@ -297,9 +378,11 @@ void handleSerialInput() {
     }
 }
 
-// Debounces the encoder's push-button and toggles SYSTEM/APP volume mode on
-// each confirmed press, showing a brief "SYS VOL"/"APP VOL" banner.
-void handleModeButton() {
+// Debounces the encoder's push-button and toggles between the TEXT and BARS
+// views on each confirmed press. No banner -- swapping the whole screen's
+// content is its own obvious feedback, and any overlay in progress is
+// dropped since it was drawn over the view being switched away from.
+void handleDisplayModeButton() {
     int reading = digitalRead(ENCODER_BTN);
     if (reading != lastRawButton) {
         lastDebounceTime = millis();
@@ -307,45 +390,41 @@ void handleModeButton() {
     }
     if ((millis() - lastDebounceTime) > debounceDelay) {
         if (reading == LOW && lastButtonState == HIGH) {
-            currentMode = (currentMode == SYSTEM_VOL) ? APP_VOL : SYSTEM_VOL;
-            showOverlay(OVERLAY_MODE, 1000, 2, 4, 8, currentMode == SYSTEM_VOL ? "SYS VOL" : "APP VOL");
+            currentDisplayMode = (currentDisplayMode == MODE_TEXT) ? MODE_BARS : MODE_TEXT;
+            activeOverlay = OVERLAY_NONE;
+            drawCurrentView();
         }
         lastButtonState = reading;
     }
 }
 
-// Reads the rotary encoder, sends a volume-up/down HID key (SYSTEM mode) or an
-// APPVOL serial command (APP mode), and shows a transient "Vol: NN%" readout.
+// Reads the rotary encoder, sends a system volume-up/down HID key, and shows
+// a transient "Vol: NN%" readout over whichever view is currently active.
 void handleEncoderRotation() {
     bool clockwise;
     if (tickEncoder(encoderState, ENCODER_PIN_CLK, ENCODER_PIN_DT, ENCODER_DEBOUNCE_MS, clockwise)) {
-        if (currentMode == SYSTEM_VOL) {
-            Consumer.write(clockwise ? MEDIA_VOLUME_UP : MEDIA_VOLUME_DOWN);
-        } else {
-            Serial.println(clockwise ? "APPVOL:+" : "APPVOL:-");
-        }
+        Consumer.write(clockwise ? MEDIA_VOLUME_UP : MEDIA_VOLUME_DOWN);
 
         char overlayText[16];
-        snprintf(overlayText, sizeof(overlayText), "%s%d%%",
-                 currentMode == SYSTEM_VOL ? "Vol: " : "App: ",
-                 currentMode == SYSTEM_VOL ? volume : appVolume);
+        snprintf(overlayText, sizeof(overlayText), "Vol: %d%%", volume);
         showOverlay(OVERLAY_VOLUME, 1000, 2, 10, 8, overlayText);
     }
 }
 
-// Clears whichever overlay (volume/mute/mode banner) is active once its
-// duration has elapsed, and restores the normal media display.
+// Clears the volume overlay once its duration has elapsed, and restores
+// whichever view was active.
 void checkOverlayTimeout() {
     if (activeOverlay != OVERLAY_NONE && (millis() - overlayStart > overlayDurationMs)) {
         activeOverlay = OVERLAY_NONE;
-        drawMediaDisplay();
+        drawCurrentView();
     }
 }
 
 // Advances the song/artist marquee scroll and redraws only when a step moved.
-// Skipped while a transient overlay (volume/mute/mode banner) is on screen, or
-// before the first PC message has ever arrived (nothing to scroll yet).
+// Skipped entirely in BARS mode (nothing to scroll), while a transient volume
+// overlay is on screen, or before the first PC message has ever arrived.
 void handleScrollTick() {
+    if (currentDisplayMode != MODE_TEXT) return;
     if (connected && activeOverlay == OVERLAY_NONE) {
         bool redraw = false;
 #if DISPLAY_LINES == 2
@@ -388,7 +467,7 @@ void handleKeypad() {
                         isMuted = !isMuted;
                         applyMuteContrast();
                         Consumer.write(MEDIA_VOLUME_MUTE);
-                        if (activeOverlay == OVERLAY_NONE) drawMediaDisplay();
+                        if (activeOverlay == OVERLAY_NONE) drawCurrentView();
                         break;
                     case 'R': Consumer.write(MEDIA_PREVIOUS);   break;
                     case 'P': Consumer.write(MEDIA_PLAY_PAUSE); break;
@@ -406,7 +485,7 @@ void handleKeypad() {
 // trigger.
 void loop() {
     handleSerialInput();
-    handleModeButton();
+    handleDisplayModeButton();
     handleEncoderRotation();
     checkOverlayTimeout();
     handleScrollTick();

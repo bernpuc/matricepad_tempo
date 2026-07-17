@@ -275,6 +275,42 @@ def get_last_playing_media_info():
         return _last_playing_media_info.copy() if _last_playing_media_info is not None else None
 
 
+# This module's own WinRT poll only runs every 3s (see _media_info_loop below),
+# so a consumer reading get_shared_media_info() every frame sees position_sec
+# as a stair-step that jumps once per poll rather than ticking continuously.
+# Smooth it by extrapolating forward from the last observed change using
+# wall-clock time, capped just past one poll interval so a source that
+# genuinely never updates its position (observed with some custom web
+# players) settles to a small, bounded offset instead of drifting forever.
+_ELAPSED_SMOOTHING_MAX_EXTRAPOLATION_S = 4.0
+_last_raw_position_sec = None
+_last_position_change_time = None
+
+
+def get_smoothed_elapsed(media_info):
+    """Returns a smoothly-ticking elapsed-seconds estimate from a media_info
+    dict (as returned by get_shared_media_info()/get_last_playing_media_info()),
+    or 0 if media_info is None."""
+    global _last_raw_position_sec, _last_position_change_time
+
+    if media_info is None:
+        _last_raw_position_sec = None
+        _last_position_change_time = None
+        return 0
+
+    raw_position = media_info.get("position_sec", 0)
+    now = time.monotonic()
+
+    if raw_position != _last_raw_position_sec:
+        _last_raw_position_sec = raw_position
+        _last_position_change_time = now
+
+    if media_info.get("playback_status") == PLAYBACK_STATUS_PLAYING:
+        extrapolated = min(now - _last_position_change_time, _ELAPSED_SMOOTHING_MAX_EXTRAPOLATION_S)
+        return int(_last_raw_position_sec + extrapolated)
+    return _last_raw_position_sec
+
+
 def _media_info_loop(stop_event):
     global _shared_media_info, _last_playing_media_info
     none_count = 0

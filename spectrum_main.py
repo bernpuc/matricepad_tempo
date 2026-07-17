@@ -23,37 +23,6 @@ from tempo_core.debug import debugPrint
 
 SEND_INTERVAL_S = 0.05  # ~20 fps
 
-# media_sources only re-polls WinRT every 3s, so position_sec is a stair-step
-# that jumps once per poll rather than ticking every frame. Smooth it locally
-# by extrapolating forward from the last observed change using wall-clock
-# time, capped just past one poll interval so a source that genuinely never
-# updates its position (observed with some custom web players) settles to a
-# small, bounded offset instead of drifting forever.
-_MAX_EXTRAPOLATION_S = 4.0
-_last_raw_position_sec = None
-_last_change_time = None
-
-
-def get_smoothed_elapsed(media_info):
-    global _last_raw_position_sec, _last_change_time
-
-    if media_info is None:
-        _last_raw_position_sec = None
-        _last_change_time = None
-        return 0
-
-    raw_position = media_info.get("position_sec", 0)
-    now = time.monotonic()
-
-    if raw_position != _last_raw_position_sec:
-        _last_raw_position_sec = raw_position
-        _last_change_time = now
-
-    if media_info.get("playback_status") == media_sources.PLAYBACK_STATUS_PLAYING:
-        extrapolated = min(now - _last_change_time, _MAX_EXTRAPOLATION_S)
-        return int(_last_raw_position_sec + extrapolated)
-    return _last_raw_position_sec
-
 
 def build_frame(levels, elapsed_sec, duration_sec):
     fields = [str(v) for v in levels] + [str(elapsed_sec), str(duration_sec)]
@@ -84,7 +53,7 @@ def main(port: str | None):
             try:
                 levels = audio_capture.get_bar_levels()
                 media_info = media_sources.get_shared_media_info()
-                elapsed_sec  = get_smoothed_elapsed(media_info)
+                elapsed_sec  = media_sources.get_smoothed_elapsed(media_info)
                 duration_sec = media_info.get("duration_sec", 0) if media_info else 0
                 frame = build_frame(levels, elapsed_sec, duration_sec)
                 debugPrint(frame.strip())
