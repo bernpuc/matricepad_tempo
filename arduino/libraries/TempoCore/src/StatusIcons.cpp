@@ -4,6 +4,9 @@ namespace TempoCore {
 
 void drawCircleIcon(Adafruit_SSD1306 &display, bool isMute) {
     display.fillCircle(64, 16, 15, SSD1306_WHITE);
+    // Thin black ring inset from the outer edge, breaking up the flat white
+    // disc with a bit of definition.
+    display.drawCircle(64, 16, 14, SSD1306_BLACK);
     if (isMute) {
         // Speaker body
         display.fillRect(50, 13, 5, 7, SSD1306_BLACK);
