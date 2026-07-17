@@ -34,7 +34,7 @@ List any software, hardware, or libraries required to run the project.
 *   Arduino IDE — board: *SparkFun Pro Micro 5V/16MHz* (or *Arduino Leonardo*) — **or** `arduino-cli` (see below)
 *   Arduino libraries: `Keypad`, `HID-Project` (NicoHood), `Adafruit GFX`, `Adafruit SSD1306`
 *   Python 3.10 (required — the `winrt` wheels are built for cp310)
-*   Python libraries: `pyserial`, `pycaw`, `comtypes`, `pywin32`, `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Media.Control`
+*   Python libraries: `pyserial`, `pycaw`, `comtypes`, `pywin32`, `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Media.Control`, `numpy`, `soundcard` (the last two for the frequency bar graph's WASAPI capture + FFT)
 
 ### Building/Uploading the Firmware
 

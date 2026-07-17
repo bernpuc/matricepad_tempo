@@ -81,16 +81,14 @@ Building/uploading requires resolving this library path explicitly — via `ardu
 | `barLevels[16]` | `int[]` | Frequency bar levels (0–100), received from the PC |
 | `elapsedSec` / `durationSec` | `int` | WinRT-only; both 0 when no timeline is available |
 | `connected` | `bool` | True when serial data has been received within TIMEOUT |
-| `line1` | `String` | Track title (2-line mode), or title line 1 (3-line mode) |
-| `line2` | `String` | Title line 2 (3-line mode only) |
-| `artist` | `String` | Artist name |
-| `volumeBeingAdjusted` | `bool` | True while volume overlay is visible |
-| `lastEncoderAdjustTime` | `unsigned long` | Timestamp of last encoder turn, for overlay timeout |
-| `muteDisplayed` | `bool` | True while any transient overlay is visible (mode, mute) |
-| `muteDisplayStart` | `unsigned long` | Timestamp of overlay start |
-| `inputBuffer` | `String` | Accumulates serial characters until `\n` |
-| `lastEncoderState` | `int` | Previous CLK pin state for edge detection |
-| `lastEncoderDebounceTime` | `unsigned long` | Last encoder edge timestamp |
+| `line1` | `char[MAX_FIELD_LEN]` | Track title (2-line mode), or title line 1 (3-line mode) |
+| `line2` | `char[MAX_FIELD_LEN]` | Title line 2 (3-line mode only) |
+| `artist` | `char[MAX_FIELD_LEN]` | Artist name |
+| `activeOverlay` | `OverlayKind` | `OVERLAY_NONE` or `OVERLAY_VOLUME` -- the volume readout is the only overlay left (mute has no banner, mode-switch has no banner) |
+| `overlayStart` | `unsigned long` | Timestamp the active overlay was raised |
+| `overlayDurationMs` | `unsigned long` | How long the active overlay stays up before reverting |
+| `inputBuffer` | `char[MAX_SERIAL_BUFFER]` | Accumulates serial characters until `\n` |
+| `encoderState` | `TempoCore::EncoderState` | `{ lastClkState, lastDebounceTime }` -- rotation edge detection, owned by `TempoCore::tickEncoder()` |
 | `lastButtonState` | `int` | Debounced encoder button state |
 | `lastRawButton` | `int` | Raw encoder button state for debounce logic |
 | `lastDebounceTime` | `unsigned long` | Last encoder button edge timestamp |
@@ -217,7 +215,7 @@ No banner -- swapping the whole screen's content between TEXT and BARS is its ow
 
 Two icons share the same position and drawing function `drawCircleIcon(bool isMute)`. Both are 32×32, drawn centred on the display (circle centre x=64, y=16, radius=15).
 
-**Rendering approach:** `drawMediaDisplay()` draws text first, then calls `drawCircleIcon` on top. `fillCircle` with `SSD1306_WHITE` paints a solid white disc that covers any scrolling text within the icon boundary. The symbol is then drawn in `SSD1306_BLACK` inside the disc.
+**Rendering approach:** `drawMediaDisplay()`/`drawBars()` draw their content first, then call `drawCircleIcon` on top. `fillCircle` with `SSD1306_WHITE` paints a solid white disc that covers any scrolling text/bars within the icon boundary, followed by a thin black ring (`drawCircle`, radius 14, 1px inset from the disc's radius-15 edge) for visual definition. The symbol is then drawn in `SSD1306_BLACK` inside the disc.
 
 **Mute icon** (`isMute == true`, shown when `isMuted == true`):
 - Speaker body: `fillRect(50, 13, 5, 7)` — solid rectangle at left of disc

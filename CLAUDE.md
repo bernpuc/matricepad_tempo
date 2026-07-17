@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MatricePad Tempo is a two-component embedded system:
 
-- **Arduino firmware** (`arduino/matrice_pad_tempo/matrice_pad_tempo.ino`) — runs on the Matrice Pro board. Drives a 128×32 OLED, reads a rotary encoder for volume control, handles a 2×2 keypad matrix that sends HID consumer media keys, and communicates with the PC over USB serial at 115200 baud.
-- **Python host script** (`template.py`) — runs on Windows. Polls Windows audio state via WinRT and pycaw, sends media info to the Arduino, and handles incoming volume/mute commands from the Arduino.
+- **Arduino firmware** (`arduino/matrice_pad_tempo/matrice_pad_tempo.ino`) — runs on the Matrice Pro board. Drives a 128×32 OLED (song/artist text view or a 16-bar frequency graph, toggled by the encoder's pushbutton), reads a rotary encoder for volume control, handles a 2×2 keypad matrix that sends HID consumer media keys, and communicates with the PC over USB serial at 115200 baud.
+- **Python host script** (`template.py`) — runs on Windows. Polls Windows audio state via WinRT/pycaw and captures WASAPI loopback audio for the bar graph, sending both to the Arduino; there is no data sent back from the Arduino (volume/media keys go straight to Windows via HID).
 
 ## Code Organization
 
@@ -69,6 +69,8 @@ Installed in `.venv310/`. Key packages:
 - `comtypes` — COM interface bridge used by pycaw
 - `pywin32` (`win32gui`, `win32process`) — window enumeration to find active audio session title
 - `winrt` (`winrt-windows-media-control`) — now-playing metadata via `GlobalSystemMediaTransportControls`
+- `numpy` — FFT for the frequency bar graph
+- `soundcard` — WASAPI loopback capture for the frequency bar graph
 
 ## Arduino Libraries
 

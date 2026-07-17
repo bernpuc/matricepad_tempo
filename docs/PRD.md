@@ -1,7 +1,7 @@
 # Product Requirements Document
 ## Matrice Pad Sound Panel
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Status:** Draft
 
 ---
@@ -17,6 +17,7 @@ The Matrice Pad Sound Panel is a USB-connected hardware peripheral and companion
 - Give the user tactile, glanceable control over audio playback without switching application focus.
 - Display the currently playing track title and artist on the Panel's OLED screen regardless of which audio source is active.
 - Mirror the system mute state accurately between the Panel and Windows at all times.
+- Give the user an at-a-glance real-time frequency visualization as an alternative to the now-playing text, switchable without touching the PC.
 
 ---
 
@@ -29,7 +30,7 @@ The system has two components that communicate over USB serial at 115200 baud.
 | Panel Firmware | ATmega32U4 (Arduino Pro Micro) | Drives display, reads controls, sends HID events |
 | Windows Service | Windows 10/11 | Polls audio state, sends display data to Panel |
 
-The Panel is the HID authority for system volume and mute commands — it sends keystrokes directly to Windows via the HID consumer control interface. The Windows Service is the data authority for media metadata, system volume level, mute state, and active application volume — it pushes this to the Panel over serial. When the Panel is in app volume mode, it sends serial commands to the Windows Service, which adjusts the active audio session volume directly.
+The Panel is the HID authority for system volume and mute commands — it sends keystrokes directly to Windows via the HID consumer control interface, entirely independent of the Windows Service. The Windows Service is the data authority for media metadata, system volume level, mute state, and the frequency bar levels — it pushes all of this to the Panel over serial, unconditionally, every frame. The Panel sends nothing back to the Windows Service; there is no app-volume mode or other serial round-trip.
 
 ---
 
@@ -58,35 +59,29 @@ The OLED shows the current track title and artist name. Two layout modes are ava
 
 Scrolling behavior: text pauses 2 seconds at each end, then scrolls at 40ms per pixel step in a bounce pattern.
 
-**5.1.2 Volume Overlay**
+**5.1.2 Frequency Bar Graph View**
 
-When the rotary encoder is turned, the display temporarily shows a volume overlay for 1 second, then returns to the now-playing screen:
-- System volume mode: `Vol: XX%` where XX is the system master volume
-- App volume mode: `App: XX%` where XX is the active application's volume
+An alternative full-screen view: 16 vertical bars spanning the display width, each reflecting a log-spaced frequency band's real-time level (0–100%), driven by WASAPI loopback capture and an FFT on the Windows Service side. Elapsed/duration (`M:SS/M:SS`) is shown in the upper-right corner when available (browser-based playback only — see 5.3). Toggled by the encoder button (5.2); mute/pause icons overlay this view exactly as they do the now-playing screen.
 
-**5.1.3 Mode Overlay**
+**5.1.3 Volume Overlay**
 
-When the encoder button is pressed, the display shows `SYS VOL` or `APP VOL` (textSize 2) for 1 second to confirm the new mode, then returns to the now-playing screen.
+When the rotary encoder is turned, the display temporarily shows `Vol: XX%` (system master volume) for 1 second over whichever view (now-playing text or bar graph) is currently active, then reverts to it. System-volume-only — there is no separate app-volume mode.
 
-**5.1.4 Mute Overlay**
+**5.1.4 Mute Icon**
 
-When the keypad mute key is pressed, the display shows `MUTE` or `UNMUTE` (textSize 3) for 1 second, then returns to the now-playing screen. The OLED contrast is also reduced when muted to provide a visual indicator on the now-playing screen.
+When the system is muted, a 32×32 status icon is drawn centred on the display (x=64, y=16): a solid white filled circle with a thin black ring inset from its edge, a speaker body, and an X mark drawn in black. The white fill covers any scrolling text or bars within the icon boundary. No text banner — the icon alone is the mute indicator, and OLED contrast is also reduced for a secondary visual cue.
 
-**5.1.5 Mute Icon**
+**5.1.5 Pause Icon**
 
-When the system is muted, a 32×32 status icon is drawn centred on the display (x=64, y=16). It consists of a solid white filled circle with a speaker body and X mark drawn in black. The white fill covers any scrolling text within the icon boundary.
+When playback is paused (and the system is not muted), the same 32×32 centred circle (with its inset ring) is drawn with a solid black right-pointing triangle (▶) inside — the standard "press to play" indicator. Mute takes precedence: if both muted and paused, only the mute icon is shown.
 
-**5.1.6 Pause Icon**
-
-When playback is paused (and the system is not muted), the same 32×32 centred circle is drawn with a solid black right-pointing triangle (▶) inside — the standard "press to play" indicator. Mute takes precedence: if both muted and paused, only the mute icon is shown.
-
-**5.1.7 Connection Lost Screen**
+**5.1.6 Connection Lost Screen**
 
 If no serial data is received from the Windows Service for 5 seconds, the display shows a "No connection / Awaiting update..." message.
 
-**5.1.8 Waiting Screen**
+**5.1.7 Waiting Screen**
 
-On boot, the display shows "Waiting for data..." until the first valid serial packet is received.
+On boot, the display shows "Waiting for data..." until the first valid serial packet is received. The now-playing text view is shown by default.
 
 ---
 
@@ -94,18 +89,16 @@ On boot, the display shows "Waiting for data..." until the first valid serial pa
 
 **Rotary Encoder**
 
-The encoder has two operating modes toggled by pressing the button:
-
-| Mode | Turn clockwise | Turn counter-clockwise |
-|---|---|---|
-| System volume (default) | HID MEDIA_VOLUME_UP | HID MEDIA_VOLUME_DOWN |
-| App volume | Serial `APPVOL:+` to Windows Service | Serial `APPVOL:-` to Windows Service |
+| Turn | Behavior |
+|---|---|
+| Clockwise | HID `MEDIA_VOLUME_UP` |
+| Counter-clockwise | HID `MEDIA_VOLUME_DOWN` |
 
 | Action | Behavior |
 |---|---|
-| Press button | Toggle between system volume mode and app volume mode; show mode overlay |
+| Press button | Toggle the display between the now-playing text view and the frequency bar graph view (5.1.1 / 5.1.2). No banner — the full-screen content swap is its own feedback. |
 
-In system volume mode the encoder operates independently of the Windows Service via HID. In app volume mode the Windows Service is required; the service adjusts the active audio session's volume by ±2% per detent.
+The encoder operates entirely independently of the Windows Service via HID; there is no app-volume mode or serial round-trip.
 
 **Keypad (2×2)**
 
@@ -145,32 +138,42 @@ The Windows Service determines the current track title and artist using a priori
 
 **Character encoding:** All text is sanitized to 7-bit ASCII before transmission. Common Unicode punctuation (curly quotes, em-dashes, ellipsis) is mapped to ASCII equivalents. Accented characters are decomposed (NFKD) and the accent stripped. Remaining non-ASCII characters are dropped silently.
 
+**Elapsed/duration:** For WinRT (browser) sources only, the service also reads the session's timeline (position/duration). Browsers typically only report position on discrete events (seek/pause/play), not continuously, so the service extrapolates the live position forward using wall-clock time since the last reported update while actively playing — matching how Windows' own Now Playing widget behaves. Both values are 0 when no WinRT timeline is available (non-browser source, nothing playing).
+
 ---
 
 ### 5.4 Windows Service — Audio State
 
 The Windows Service polls for:
 
-- **System master volume level** (0–100, integer) — from the default audio endpoint
+- **System master volume level** (0–100, integer) — from the default audio endpoint, polled frequently (sub-second) so the Panel's volume overlay (5.1.3) reflects a just-made adjustment rather than a stale value
 - **System mute state** (boolean) — from the default audio endpoint
-- **Active application volume** (0–100, integer) — from the active audio session's `SimpleAudioVolume`; 0 if no session is active
 
-All three are included in every serial packet sent to the Panel. The Panel uses system volume and mute to keep its display and contrast in sync. The Panel uses app volume for the `App: XX%` overlay when in app volume mode.
-
-The Windows Service also handles inbound `APPVOL:+` / `APPVOL:-` messages from the Panel, adjusting the active session volume by ±2% per message.
-
-Poll interval: 2 seconds.
+Both are included in every serial packet sent to the Panel, which uses them to keep its display and contrast in sync. There is no active-application-volume tracking — that concept was dropped along with app-volume mode (5.2).
 
 ---
 
-### 5.5 Serial Protocol
+### 5.5 Windows Service — Frequency Bar Graph
+
+The Windows Service continuously captures the default output device's audio via WASAPI loopback and computes a 16-band log-spaced FFT spectrum for the Panel's bar graph view (5.1.2):
+
+- Capture in fixed-size chunks (~1024 samples), mixed to mono, Hann-windowed
+- FFT magnitude normalized against the window's energy, converted to dB, clamped to a fixed floor/ceiling and mapped to a 0–100 level per band
+- 16 bands log-spaced between roughly 60 Hz and 16 kHz
+- Attack/decay smoothing frame-to-frame (instant rise, gradual fall) so bars don't flicker
+
+This capture and the WinRT media-info polling (5.3) each perform their own first-time audio-subsystem initialization; starting them concurrently on separate threads is a known crash risk (observed as a hard native crash in the Python prototype) and must be staggered.
+
+---
+
+### 5.6 Serial Protocol
 
 Messages are newline-terminated (`\n`), ASCII only.
 
 **PC → Panel**
 
 ```
-song||artist||volume||muted||appvolume||paused\n
+song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSec\n
 ```
 
 | Field | Type | Notes |
@@ -179,23 +182,17 @@ song||artist||volume||muted||appvolume||paused\n
 | artist | string | Artist name, may be empty |
 | volume | integer | 0–100, system master volume |
 | muted | integer | 0 = unmuted, 1 = muted |
-| appvolume | integer | 0–100, active application volume; 0 if no active session |
 | paused | integer | 0 = playing or unknown, 1 = paused |
+| bar0..bar15 | integer | 16 frequency-bar levels, 0–100, comma-joined sub-field |
+| elapsedSec, durationSec | integer | WinRT-only; both 0 when unavailable |
 
 Sent on every content change, or as a keepalive every 2.5 seconds to prevent the Panel's 5-second connection timeout.
 
-**Panel → PC**
-
-| Message | Condition |
-|---|---|
-| `APPVOL:+\n` | Encoder turned clockwise while in app volume mode |
-| `APPVOL:-\n` | Encoder turned counter-clockwise while in app volume mode |
-
-Any other output from the Panel is logged by the Windows Service.
+**Panel → PC:** none. The Panel never sends data back — volume/media-key HID events go straight to Windows, and the display-mode toggle (5.2) is entirely local to the Panel.
 
 ---
 
-### 5.6 Windows Service — Connection Management
+### 5.7 Windows Service — Connection Management
 
 - **Auto-detection:** The Panel's USB VID:PID is used to automatically identify the correct COM port. Manual override is supported.
 - **Reconnection:** If the serial connection is lost, the service automatically retries with up to 5 attempts and 2-second delays between attempts, then continues retrying indefinitely.

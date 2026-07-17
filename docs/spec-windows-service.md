@@ -1,13 +1,13 @@
 # Software Specification: Windows Service
 ## Matrice Pad Sound Panel — .NET 9
 
-**Version:** 1.1
+**Version:** 1.2
 
 ---
 
 ## 1. Overview
 
-The Windows Service is a .NET 9 Worker Service that runs as a Windows background service. It monitors Windows audio state, retrieves now-playing metadata, and pushes data to the Panel over USB serial. It has no UI.
+The Windows Service is a .NET 9 Worker Service that runs as a Windows background service. It monitors Windows audio state, retrieves now-playing metadata, captures loopback audio for the Panel's frequency bar graph, and pushes all of it to the Panel over USB serial, unconditionally. It has no UI. It never receives data back from the Panel -- HID volume/media-key events and the Panel's display-mode toggle are entirely independent of this service.
 
 ---
 
@@ -18,7 +18,8 @@ The Windows Service is a .NET 9 Worker Service that runs as a Windows background
 | Service host | .NET 9 Worker Service (`BackgroundService`) |
 | Windows Service integration | `UseWindowsService()` |
 | WinRT media transport | `Windows.Media.Control` via .NET WinRT interop |
-| Audio API | `NAudio.CoreAudioApi` (MMDevice, AudioSessionManager) |
+| Audio API | `NAudio.CoreAudioApi` (MMDevice) for volume/mute; `NAudio.Wave.WasapiLoopbackCapture` for the bar graph |
+| FFT | `MathNet.Numerics` (or equivalent) for the bar graph's spectrum |
 | Window enumeration | P/Invoke: `user32.dll` `EnumWindows`, `GetWindowText`, `IsWindowVisible`; `kernel32.dll` `GetWindowThreadProcessId` |
 | Serial port | `System.IO.Ports.SerialPort` |
 | COM port detection | `System.IO.Ports.SerialPort.GetPortNames()` + WMI `Win32_PnPEntity` for VID/PID matching |
@@ -39,10 +40,12 @@ MatricePadService/
 │   ├── Interfaces/
 │   │   ├── ISerialManager.cs
 │   │   ├── IMediaInfoProvider.cs
-│   │   └── IAudioStateProvider.cs
+│   │   ├── IAudioStateProvider.cs
+│   │   └── IAudioCaptureProvider.cs
 │   ├── SerialManager.cs
 │   ├── MediaInfoProvider.cs          # WinRT + window title logic
-│   └── AudioStateProvider.cs         # NAudio volume + mute
+│   ├── AudioStateProvider.cs         # NAudio volume + mute
+│   └── AudioCaptureProvider.cs       # WASAPI loopback + FFT -> bar levels
 ├── Models/
 │   ├── MediaInfo.cs
 │   ├── AudioState.cs
@@ -63,8 +66,8 @@ MatricePadService/
     "KeepaliveIntervalMs": 2500,
     "ConnectionTimeoutMs": 5000,
     "ReconnectDelayMs": 2000,
-    "MainLoopIntervalMs": 200,
-    "VolumeAudioPollIntervalMs": 2000,
+    "MainLoopIntervalMs": 50,
+    "SystemVolumePollIntervalMs": 150,
     "WindowTitlePollIntervalMs": 1000,
     "WinRtPollIntervalMs": 3000,
     "PausedSessionClearCountdown": 3,
@@ -76,12 +79,22 @@ MatricePadService/
     ],
     "NoisyWindowTitles": [
       "libvlcsharp.wpf", "libvlcsharp", "vlcsharp"
-    ]
+    ],
+    "AudioCapture": {
+      "SampleRate": 44100,
+      "ChunkSize": 1024,
+      "NumBars": 16,
+      "BandMinHz": 60,
+      "BandMaxHz": 16000,
+      "DbFloor": -60,
+      "DbCeiling": 0,
+      "DecayStepPerFrame": 8
+    }
   }
 }
 ```
 
-`ComPort: null` enables auto-detection. All intervals are in milliseconds.
+`ComPort: null` enables auto-detection. All intervals are in milliseconds. `MainLoopIntervalMs` dropped from 200ms to 50ms (~20fps) to keep the bar graph smooth; `VolumeAudioPollIntervalMs` was split out and shortened to `SystemVolumePollIntervalMs` (150ms) now that the volume overlay needs to reflect a just-made adjustment within its 1-second display window -- app-volume polling is gone entirely along with app-volume mode.
 
 ---
 
@@ -94,29 +107,35 @@ record MediaInfo(
     string Title,
     string Artist,
     string AlbumArtist,
-    PlaybackStatus Status
+    PlaybackStatus Status,
+    int PositionSec,
+    int DurationSec
 );
 
 enum PlaybackStatus { Unknown = -1, Playing = 4, Paused = 5 }
 ```
 
+`PositionSec`/`DurationSec` are WinRT-only (0 when unavailable) and `PositionSec` is already wall-clock-extrapolated -- see section 8.
+
 ### `AudioState`
 
 ```csharp
-record AudioState(int Volume, bool IsMuted, int AppVolume);
+record AudioState(int Volume, bool IsMuted);
 ```
 
-`AppVolume` is the active audio session's volume (0–100); 0 if no active session.
+No app-volume field -- that concept was dropped along with app-volume mode.
 
 ### `SerialPacket`
 
 ```csharp
-record SerialPacket(string Song, string Artist, int Volume, bool IsMuted, int AppVolume, bool Paused)
+record SerialPacket(string Song, string Artist, int Volume, bool IsMuted, bool Paused, int[] BarLevels, int ElapsedSec, int DurationSec)
 {
     public string Encode() =>
-        $"{Song}||{Artist}||{Volume}||{(IsMuted ? 1 : 0)}||{AppVolume}||{(Paused ? 1 : 0)}\n";
+        $"{Song}||{Artist}||{Volume}||{(IsMuted ? 1 : 0)}||{(Paused ? 1 : 0)}||{string.Join(',', BarLevels)}||{ElapsedSec}||{DurationSec}\n";
 }
 ```
+
+`BarLevels` is always 16 elements, each 0–100.
 
 ---
 
@@ -136,11 +155,7 @@ interface ISerialManager
 - On `Send()`: if not connected, attempt to connect first. Write ASCII-encoded bytes.
 - Connection establishment: iterate known VID:PID pairs via WMI `Win32_PnPEntity` to find the COM port. If `ComPort` is set in config, use it directly. Retry up to 5 times with `ReconnectDelayMs` delay. Wait 2 seconds after opening before sending.
 - If a `SerialException` is thrown during `Send()`, close the port and mark as disconnected. The next `Send()` call will reconnect.
-- Read loop: a background thread calls `ReadLine()` in a loop. Any non-empty line received is raised via `LineReceived`.
-- `LineReceived` subscribers handle operational messages:
-  - `APPVOL:+` — increase active session volume by 2%
-  - `APPVOL:-` — decrease active session volume by 2%
-  - All other lines are logged at Debug level.
+- Read loop: a background thread calls `ReadLine()` in a loop. Any non-empty line received is raised via `LineReceived` and logged at Debug level -- the Panel has no operational commands to send back, so this exists purely for diagnostic visibility.
 
 ---
 
@@ -150,16 +165,14 @@ interface ISerialManager
 interface IAudioStateProvider
 {
     AudioState GetCurrent();
-    void AdjustAppVolume(int delta);
 }
 ```
 
 **`AudioStateProvider` behavior:**
 
 - On construction: acquire the default audio render endpoint via `MMDeviceEnumerator` targeting `DataFlow.Render` / `Role.Multimedia`.
-- `GetCurrent()`: returns cached value. Refreshes cache when `VolumeAudioPollIntervalMs` has elapsed since last read.
-- Cache refresh: read `AudioEndpointVolume.MasterVolumeLevelScalar` (map to 0–100 integer), `AudioEndpointVolume.Mute`, and the active session's `SimpleAudioVolume.MasterVolume` (map to 0–100 integer). Active session is the first `AudioSessionState.Active` session with an associated process.
-- `AdjustAppVolume(int delta)`: find the active session, read its current `SimpleAudioVolume.MasterVolume`, add `delta / 100.0f`, clamp to `[0.0, 1.0]`, write back. Invalidates the app volume cache so the next `GetCurrent()` reflects the change immediately.
+- `GetCurrent()`: returns cached value. Refreshes cache when `SystemVolumePollIntervalMs` (150ms) has elapsed since last read -- short enough that the Panel's `Vol: XX%` overlay (visible for only 1 second) reflects a just-made adjustment rather than a stale pre-turn value.
+- Cache refresh: read `AudioEndpointVolume.MasterVolumeLevelScalar` (map to 0–100 integer) and `AudioEndpointVolume.Mute`. No session enumeration needed -- both are cheap reads on the already-open endpoint interface.
 
 ---
 
@@ -197,10 +210,15 @@ Returns `null` when no source yields a title (display cleared).
 3. If none found, fall back to `GetCurrentSession()`
 4. Call `TryGetMediaPropertiesAsync()` on the chosen session
 5. Read `PlaybackStatus` from `GetPlaybackInfo()`
-6. Store result in `_winRtInfo` under lock
-7. If `Status == Playing`, also update `_lastPlaying` under lock
-8. If result is `null` for `PausedSessionClearCountdown` consecutive polls, clear both `_winRtInfo` and `_lastPlaying` under lock
-9. Sleep `WinRtPollIntervalMs`; catch and log all exceptions, continue loop
+6. Read `GetTimelineProperties()` for `Position`/`EndTime`/`LastUpdatedTime`
+7. Store result (including `PositionSec`/`DurationSec`, see below) in `_winRtInfo` under lock
+8. If `Status == Playing`, also update `_lastPlaying` under lock
+9. If result is `null` for `PausedSessionClearCountdown` consecutive polls, clear both `_winRtInfo` and `_lastPlaying` under lock
+10. Sleep `WinRtPollIntervalMs`; catch and log all exceptions, continue loop
+
+**Elapsed-time smoothing:** Browsers (Chrome, etc.) generally only call the Media Session position-reporting API on discrete events (seek/pause/play), not continuously -- so `Position` from step 6 is a snapshot as of `LastUpdatedTime`, not a live value, and polling it raw every `WinRtPollIntervalMs` produces a stair-step that jumps once per poll. Two layers of smoothing correct this, matching the Python prototype:
+- When building `MediaInfo` in the polling loop (step 7), if `Status == Playing`, extrapolate: `PositionSec = (int)(Position + (UtcNow - LastUpdatedTime)).TotalSeconds`.
+- Consumers reading `GetCurrent()` on a faster cadence (e.g. the main worker loop, section 10) should further extrapolate from the last *observed change* using their own wall-clock delta, capped just past one `WinRtPollIntervalMs` so a source that never updates its position at all settles to a small, bounded offset instead of drifting forever.
 
 **Window title polling** (inline, called from main worker loop on its schedule):
 
@@ -214,9 +232,31 @@ Returns `null` when no source yields a title (display cleared).
 
 ---
 
-## 9. Title Parsing
+## 9. `IAudioCaptureProvider`
 
-### 9.1 ASCII Sanitization
+```csharp
+interface IAudioCaptureProvider
+{
+    int[] GetBarLevels();   // always 16 elements, each 0-100
+}
+```
+
+**`AudioCaptureProvider` behavior** (runs on a dedicated background thread, started with a ~1s delay relative to the WinRT polling loop's startup -- see the concurrency note below):
+
+1. Open the default render device's loopback capture (`WasapiLoopbackCapture`) at `AudioCapture.SampleRate`, buffered in `AudioCapture.ChunkSize`-sample chunks.
+2. On each chunk: mix to mono, apply a Hann window, run an FFT, normalize the magnitude by the window's energy.
+3. Bin the magnitude spectrum into `AudioCapture.NumBars` log-spaced bands between `BandMinHz` and `BandMaxHz` (aggregate via max magnitude per band).
+4. Convert each band to dB, clamp to `[DbFloor, DbCeiling]`, map linearly to a 0–100 level.
+5. Smooth frame-to-frame: `level = max(instantLevel, previousLevel - DecayStepPerFrame)` -- instant rise, gradual fall, so bars don't flicker.
+6. Store the 16 levels under a lock; `GetBarLevels()` returns a copy.
+
+**Concurrency note:** this provider and `IMediaInfoProvider`'s WinRT polling loop each perform their own first-time audio-subsystem initialization on their own thread. In the Python prototype, starting the equivalent of both at the same instant produced a hard native crash (SIGSEGV) from a COM apartment-initialization race between the loopback-capture library and the WinRT interop layer. Whether .NET's WASAPI/WinRT interop has the same failure mode is unconfirmed, but starting these two background loops with a deliberate stagger (e.g. ~1s) is a cheap precaution worth carrying forward.
+
+---
+
+## 10. Title Parsing
+
+### 10.1 ASCII Sanitization
 
 Applied to all strings before inclusion in a `SerialPacket`:
 
@@ -224,7 +264,7 @@ Applied to all strings before inclusion in a `SerialPacket`:
 2. Unicode NFKD normalization (decomposes accented characters)
 3. Encode to ASCII with `EncoderFallback.ReplacementFallback` using empty string (drop non-ASCII)
 
-### 9.2 Window Title Parser
+### 10.2 Window Title Parser
 
 Tries patterns in order, first match wins:
 
@@ -236,7 +276,7 @@ Tries patterns in order, first match wins:
 
 Returns `("", "")` if no pattern matches.
 
-### 9.3 WinRT / YouTube Title Parser
+### 10.3 WinRT / YouTube Title Parser
 
 Input: raw WinRT `title` string + `artist` string.
 
@@ -255,34 +295,36 @@ Input: raw WinRT `title` string + `artist` string.
 
 ---
 
-## 10. Main Worker Loop (`Worker.cs`)
+## 11. Main Worker Loop (`Worker.cs`)
 
-Runs every `MainLoopIntervalMs` (200ms):
+Runs every `MainLoopIntervalMs` (50ms, ~20fps -- fast enough for a smooth bar graph):
 
-1. Get `AudioState` from `IAudioStateProvider` (includes `Volume`, `IsMuted`, `AppVolume`)
+1. Get `AudioState` from `IAudioStateProvider` (`Volume`, `IsMuted`)
 2. Get `MediaInfo?` from `IMediaInfoProvider`
-3. Build `SerialPacket`:
+3. Get bar levels from `IAudioCaptureProvider.GetBarLevels()`
+4. Compute `ElapsedSec`/`DurationSec`: further wall-clock extrapolation of `MediaInfo.PositionSec` per the smoothing note in section 8, and `MediaInfo.DurationSec` (both 0 if `MediaInfo` is null)
+5. Build `SerialPacket`:
    - If `MediaInfo` is null: `song = ""`, `artist = ""`
    - Otherwise: apply title parser per source selection, apply ASCII sanitization
-   - Always populate `Volume`, `IsMuted`, `AppVolume` from `AudioState`
+   - Always populate `Volume`, `IsMuted` from `AudioState`, `BarLevels` from step 3, `ElapsedSec`/`DurationSec` from step 4
    - Derive `Paused`: `true` when the browser source reports `PlaybackStatus.Paused`, or when the no-active-session case is falling back to `_lastPlaying` (paused persistence); `false` for actively playing or window-title sources
-4. If packet content differs from last sent, or `KeepaliveIntervalMs` has elapsed: call `ISerialManager.Send(packet.Encode())`
-5. Update last-sent packet and timestamp
+6. If packet content differs from last sent, or `KeepaliveIntervalMs` has elapsed: call `ISerialManager.Send(packet.Encode())`
+7. Update last-sent packet and timestamp
 
-`APPVOL:+` / `APPVOL:-` messages from the Panel are handled on the serial read thread via the `LineReceived` event → `IAudioStateProvider.AdjustAppVolume(±2)`. This is independent of the main loop.
+There is nothing analogous to the old `APPVOL:+/-` handling -- the Panel sends nothing back, so the main loop is the only producer of serial traffic.
 
 ---
 
-## 11. Service Lifecycle
+## 12. Service Lifecycle
 
 - Installed and managed via `sc.exe` or PowerShell `New-Service`
 - Start type: Automatic (delayed)
 - `UseWindowsService()` handles `OnStart`/`OnStop` integration
-- On `StopAsync`: signal the WinRT polling loop to exit, dispose serial port cleanly
+- On `StopAsync`: signal the WinRT polling loop and audio capture loop to exit, dispose serial port and loopback capture cleanly
 
 ---
 
-## 12. Logging
+## 13. Logging
 
 | Event | Level |
 |---|---|
@@ -293,9 +335,9 @@ Runs every `MainLoopIntervalMs` (200ms):
 | Keepalive sent | Debug |
 | WinRT metadata retrieved | Debug |
 | WinRT session errors | Warning |
+| Audio capture device open/close | Information |
+| Audio capture errors (e.g. device disconnected) | Warning |
 | Unhandled exceptions in loops | Error |
-| `APPVOL:+/-` received, session adjusted | Debug |
-| `APPVOL:+/-` received, no active session | Warning |
-| Lines received from Panel (other) | Debug |
+| Lines received from Panel (diagnostic only, no commands) | Debug |
 
 Target: Windows Event Log (`Application` source `MatricePadService`) for Warning and above; optionally a rolling file sink for Debug in development.
