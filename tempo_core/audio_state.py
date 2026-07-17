@@ -8,7 +8,15 @@ _mute_cache       = False
 _app_volume_cache = 0
 _volume_next      = 0.0
 _app_volume_next  = 0.0
-_VOLUME_INTERVAL  = 2.0
+# System volume/mute is a cheap read on the already-open endpoint interface, so
+# it's cached briefly just to avoid a COM call on every single main-loop tick --
+# short enough that the encoder's "Vol: XX%" overlay (visible for only 1000ms)
+# reflects a just-made adjustment instead of showing a stale pre-twist value.
+_SYSTEM_VOLUME_INTERVAL = 0.15
+# App volume requires enumerating all audio sessions (GetAllSessions()), a
+# real COM cost -- and nothing displays it live anymore, so it stays on the
+# original slower interval.
+_APP_VOLUME_INTERVAL    = 2.0
 
 
 def get_active_audio_session():
@@ -25,7 +33,7 @@ def get_app_volume():
     if now >= _app_volume_next:
         session = get_active_audio_session()
         _app_volume_cache = int(session.SimpleAudioVolume.GetMasterVolume() * 100) if session else 0
-        _app_volume_next  = now + _VOLUME_INTERVAL
+        _app_volume_next  = now + _APP_VOLUME_INTERVAL
     return _app_volume_cache
 
 
@@ -41,5 +49,5 @@ def get_audio_settings(volume_i):
     if now >= _volume_next:
         _volume_cache = int(volume_i.GetMasterVolumeLevelScalar() * 100)
         _mute_cache   = bool(volume_i.GetMute())
-        _volume_next  = now + _VOLUME_INTERVAL
+        _volume_next  = now + _SYSTEM_VOLUME_INTERVAL
     return _volume_cache, _mute_cache, get_app_volume()
