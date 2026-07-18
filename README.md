@@ -7,20 +7,21 @@
 
 ## Project Description
 
-Firmware for Matrice Pro -Tempo 1.0- boards and server-side python.
+Firmware for Matrice Pro -Tempo 1.0- boards, plus a Windows host app that feeds them now-playing media info, volume/mute, and a real-time frequency spectrum over USB serial.
 
 This project combines:
 
-*   **Arduino Code:**  Displays audio stream data and monitors potentiometer for volume control and push buttons for playback control.
-*   **Python Code:** Scrapes audio stream data - artist, song, volume level and sends to the microcontroller.
+*   **Arduino Firmware:** Drives a 128×32 OLED (now-playing text or a 16-bar frequency graph), reads a rotary encoder and 2×2 keypad, and sends HID volume/media-key events straight to Windows.
+*   **Windows Host — `MatricePadApp/` (.NET 10, active):** Polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and streams it all to the board. Installed via an NSIS installer that registers a Task Scheduler "at logon" task — see `MatricePadApp/build-installer.ps1`.
+*   **Windows Host — `template.py` (Python, legacy):** The original implementation. Kept in the repo for reference; no longer runs at startup, superseded by `MatricePadApp/` above.
+
+See `docs/PRD.md` and the other `docs/spec-*.md` files for the full design, and `CLAUDE.md` for repo-specific developer notes.
 
 ## Getting Started
 
 These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
 
 ### Prerequisites
-
-List any software, hardware, or libraries required to run the project.
 
 **Hardware:**
 
@@ -33,8 +34,9 @@ List any software, hardware, or libraries required to run the project.
 
 *   Arduino IDE — board: *SparkFun Pro Micro 5V/16MHz* (or *Arduino Leonardo*) — **or** `arduino-cli` (see below)
 *   Arduino libraries: `Keypad`, `HID-Project` (NicoHood), `Adafruit GFX`, `Adafruit SSD1306`
-*   Python 3.10 (required — the `winrt` wheels are built for cp310)
-*   Python libraries: `pyserial`, `pycaw`, `comtypes`, `pywin32`, `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Media.Control`, `numpy`, `soundcard` (the last two for the frequency bar graph's WASAPI capture + FFT)
+*   .NET 10 SDK (Windows host, `MatricePadApp/`)
+*   NSIS (only needed to build the installer — `MatricePadApp/build-installer.ps1`)
+*   *(Legacy Python host only, not required for normal use)* Python 3.10 (the `winrt` wheels are built for cp310) with `pyserial`, `pycaw`, `comtypes`, `pywin32`, `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Media.Control`, `numpy`, `soundcard`
 
 ### Building/Uploading the Firmware
 
@@ -55,11 +57,32 @@ New-Item -ItemType Junction -Path "<your sketchbook>\libraries\TempoCore" -Targe
 ```
 (Find your sketchbook path via File → Preferences → "Sketchbook location" in the IDE.) After that, open `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` directly and Upload as normal.
 
-### Installation
+### Running the Windows Host
 
-Explain how to set up the project.
-
-**1.  Clone the repository:**
+**1. Clone the repository:**
 
 ```bash
-git clone https://github.com/matricetechnologies/matricepad_tempo.git
+git clone https://github.com/bernpuc/matricepad_tempo.git
+```
+
+**2. Production (.NET) — install so it runs at logon:**
+
+```powershell
+cd MatricePadApp
+.\build-installer.ps1
+# then run Package\Matrice Pad Sound Panel <version> Installer.exe (prompts UAC)
+```
+
+This installs to `C:\Program Files\MatricePad\`, registers a Task Scheduler "at logon" task, and launches immediately. To run without installing:
+
+```powershell
+cd MatricePadApp
+dotnet run
+```
+
+**3. Legacy (Python) — for reference/comparison only, not required for normal use:**
+
+```powershell
+.\.venv310\Scripts\Activate.ps1
+python template.py --port COMx --debug   # --port and --debug are optional
+```

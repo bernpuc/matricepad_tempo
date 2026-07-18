@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MatricePad Tempo is a two-component embedded system:
 
 - **Arduino firmware** (`arduino/matrice_pad_tempo/matrice_pad_tempo.ino`) — runs on the Matrice Pro board. Drives a 128×32 OLED (song/artist text view or a 16-bar frequency graph, toggled by the encoder's pushbutton), reads a rotary encoder for volume control, handles a 2×2 keypad matrix that sends HID consumer media keys, and communicates with the PC over USB serial at 115200 baud.
-- **Python host script** (`template.py`) — runs on Windows. Polls Windows audio state via WinRT/pycaw and captures WASAPI loopback audio for the bar graph, sending both to the Arduino; there is no data sent back from the Arduino (volume/media keys go straight to Windows via HID).
+- **Windows host** — polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and sends it all to the Arduino; there is no data sent back from the Arduino (volume/media keys go straight to Windows via HID). Two implementations exist:
+  - **`MatricePadApp/`** (.NET 10) — the active production host, installed via its NSIS installer (`MatricePadApp/build-installer.ps1`) as a Task Scheduler "at logon" task. Design doc: `docs/spec-windows-app.md`.
+  - **`template.py`** / `tempo_core/` (Python) — the original implementation. Retained in the repo for reference; no longer runs at startup. The wire protocol and behavior described throughout this file (serial framing, media-source priority, COM-init stagger, etc.) apply to both implementations — `MatricePadApp` is a from-scratch C# port of the same design, not a different protocol.
 
 ## Code Organization
 
@@ -49,9 +51,23 @@ The encoder button toggles the Arduino between a **TEXT** view (song/artist, scr
 bar0,bar1,...,bar15,elapsedSec,durationSec
 ```
 
-## Running the Python Script
+## Running the Windows Host (`MatricePadApp/`, production)
 
-The venv is at `.venv310/` (Python 3.10 — required for winrt cp310 wheels). Activate and run:
+```powershell
+cd MatricePadApp
+dotnet run                     # run directly, no install
+
+.\build-installer.ps1          # publish self-contained + build the NSIS installer
+# then run Package\Matrice Pad Sound Panel <version> Installer.exe (prompts UAC) --
+# installs to C:\Program Files\MatricePad\, registers the MatricePadApp Task
+# Scheduler task (at logon, current user), and launches immediately
+```
+
+COM port is auto-detected by USB VID:PID via WMI; override via `appsettings.json`'s `MatricePad:ComPort`. Logs go to `%APPDATA%\MatricePad\logs\`.
+
+## Running the Python Script (legacy, reference only)
+
+The venv is at `.venv310/` (Python 3.10 — required for winrt cp310 wheels). Not run at startup anymore -- kept for comparison/debugging. Activate and run:
 
 ```powershell
 .\.venv310\Scripts\Activate.ps1
@@ -60,7 +76,7 @@ python template.py
 
 COM port is auto-detected by USB VID:PID. Pass `--port COMx` to override. Pass `--debug` for verbose output.
 
-## Python Dependencies
+## Python Dependencies (legacy)
 
 Installed in `.venv310/`. Key packages:
 

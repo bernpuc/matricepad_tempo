@@ -72,5 +72,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+$packageDir = Join-Path $projectDir "Package"
+$builtInstaller = Get-ChildItem $packageDir -Filter "*$version Installer.exe" | Select-Object -First 1
+
 Write-Host "`nInstaller built successfully!" -ForegroundColor Green
-Write-Host "Installer location: $projectDir\Package\Matrice Pad Sound Panel $version Installer.exe" -ForegroundColor Cyan
+Write-Host "Installer location: $($builtInstaller.FullName)" -ForegroundColor Cyan

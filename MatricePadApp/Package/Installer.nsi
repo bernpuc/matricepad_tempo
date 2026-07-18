@@ -1,15 +1,16 @@
 ; Installer.nsi
-; NSIS installer for the Matrice Pad Sound Panel Windows App.
+; NSIS installer for the Matrice Pad Tempo Companion Windows App.
 ; Usage locally: makensis -DVERSION=1.0.0 Installer.nsi
 ; In CI: makensis -DVERSION=%VERSION% Installer.nsi
 ;
 ; Unlike the other NSIS installers in this developer's other projects
-; (InvoicingApp, HeatingOilTracker, BookChat), this one has no window and no
-; shortcuts -- it registers a Task Scheduler "at logon" entry instead, per
-; docs/spec-installer.md. Published self-contained (see build-installer.ps1),
-; so there is no .NET runtime prerequisite to check.
+; (InvoicingApp, HeatingOilTracker, BookChat), this one has no directory
+; picker or shortcuts -- it registers a Task Scheduler "at logon" entry
+; instead, per docs/spec-installer.md. Published self-contained (see
+; build-installer.ps1), so there is no .NET runtime prerequisite to check.
 
-!define APP_NAME "Matrice Pad Sound Panel"
+!define APP_PUBLISHER "Matrice Technologies, Inc."
+!define APP_NAME "Matrice Pad Tempo Companion"
 !define TASK_NAME "MatricePadApp"
 !define EXE_NAME "MatricePadApp.exe"
 !define INSTALL_DIR_NAME "MatricePad"
@@ -24,16 +25,37 @@
 ; below).
 RequestExecutionLevel admin
 
-; No MUI2.nsh include -- this installer has no icon or directory picker (see
-; docs/spec-installer.md §5), so it never uses any MUI page macros, unlike
-; the other NSIS installers in this developer's other projects.
+; Branding: app.ico is the 150x150 black "M" monogram (Assets/matrice tech
+; logo instagram.jpg), converted to a multi-resolution ICO. header.bmp is the
+; white "MATRICE TECHNOLOGIES" wordmark (Assets/MATRICE-LOGO-WHITE-ALT23.png,
+; originally transparent) composited onto matching black at 150x57, the
+; standard MUI header-banner size -- see scratchpad/Convert-ImageToIco.ps1
+; used to generate both from the source assets.
+!include "MUI2.nsh"
+!define MUI_ICON "..\Assets\app.ico"
+!define MUI_UNICON "..\Assets\app.ico"
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_BITMAP "..\Assets\header.bmp"
+!define MUI_HEADERIMAGE_RIGHT
+
+VIProductVersion "${VERSION}.0"
+VIAddVersionKey "ProductName" "${APP_NAME}"
+VIAddVersionKey "CompanyName" "${APP_PUBLISHER}"
+VIAddVersionKey "FileDescription" "${APP_NAME} Installer"
+VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "LegalCopyright" "${APP_PUBLISHER}"
 
 Name "${APP_NAME} ${VERSION}"
 OutFile "${INSTALLER_EXE}"
 InstallDir "$PROGRAMFILES64\${INSTALL_DIR_NAME}"
 
 ; No directory picker -- fixed install location per docs/spec-installer.md §5.
-Page instfiles
+; Still routed through the MUI page macro (not the old-style `Page instfiles`)
+; so the branded header banner renders on it.
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
   ; Stop any running instance and remove any existing scheduled task first, so
@@ -60,7 +82,7 @@ Section "Install"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "UninstallString" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "Publisher" "bernpuc"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "Publisher" "${APP_PUBLISHER}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "NoRepair" 1
