@@ -79,6 +79,12 @@ Section "Install"
   ; appsettings.Development.json is a dev-only artifact, not shipped.
   File /r /x "appsettings.json" /x "appsettings.Development.json" "${PUBLISH_DIR}\*.*"
 
+  ; End-user README (not part of dotnet publish output -- lives at the
+  ; MatricePadApp project root) so anyone who stumbles on the running process
+  ; or the install folder can find out what it is and how to stop it. Always
+  ; overwritten, unlike appsettings.json -- it's not user-editable state.
+  File "..\README.md"
+
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "UninstallString" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "DisplayVersion" "${VERSION}"
