@@ -1,13 +1,13 @@
 # Software Specification: Windows App
-## Matrice Pad Sound Panel — .NET 9
+## Matrice Pad Tempo — .NET 10
 
-**Version:** 1.3
+**Version:** 1.4
 
 ---
 
 ## 1. Overview
 
-The Windows App is a .NET 9 console/background application that runs **per-user, started at logon** -- not a Windows Service. It monitors Windows audio state, retrieves now-playing metadata, captures loopback audio for the Panel's frequency bar graph, and pushes all of it to the Panel over USB serial, unconditionally. It has no UI (aside from an optional tray icon, out of scope for this spec). It never receives data back from the Panel -- HID volume/media-key events and the Panel's display-mode toggle are entirely independent of this app.
+The Windows App -- branded **Matrice Pad Tempo Companion** in its installer and Add/Remove Programs entry, project name `MatricePadApp` -- is a .NET 10 background application that runs **per-user, started at logon** -- not a Windows Service. It monitors Windows audio state, retrieves now-playing metadata, captures loopback audio for the Panel's frequency bar graph, and pushes all of it to the Panel over USB serial, unconditionally. It has no UI whatsoever -- not even a tray icon (the "optional tray icon" floated in earlier drafts of this spec was dropped; see §2's `OutputType` row) -- and never receives data back from the Panel -- HID volume/media-key events and the Panel's display-mode toggle are entirely independent of this app.
 
 **Why not a Windows Service:** an earlier design considered a true LocalSystem Windows Service. A throwaway probe (`SessionZeroProbe`, see below) confirmed that WinRT's `GlobalSystemMediaTransportControlsSessionManager` fails outright when running in Session 0 (`COMException: The specified service does not exist as an installed service.`) -- the API depends on a broker that only activates in an interactive user session. Desktop window enumeration (used for the non-browser title-parsing fallback, section 8) has the same fundamental limitation: there is no desktop to enumerate in Session 0. Interestingly, NAudio's `MMDeviceEnumerator`/default-endpoint access *did* succeed under the same LocalSystem/Session 0 conditions, so the failure is specific to desktop/session-scoped APIs (WinRT media brokering, window enumeration), not audio access broadly. Since the only real benefit of a true service -- working before login / across user switches / with nobody logged in (e.g. an HTPC-style box) -- isn't a requirement here ("runs whenever I'm logged in" is sufficient), the simplest correct architecture is a single per-user process, avoiding a service/helper split and IPC entirely.
 
@@ -17,16 +17,18 @@ The Windows App is a .NET 9 console/background application that runs **per-user,
 
 | Concern | Technology |
 |---|---|
-| App host | .NET 9 console app / generic host (`BackgroundService` under `Host.CreateApplicationBuilder`) |
+| App host | .NET 10 generic host (`BackgroundService` under `Host.CreateApplicationBuilder`), target framework `net10.0-windows10.0.19041.0` |
+| `OutputType` | `WinExe`, not the Worker SDK default of `Exe` -- compiles as a Windows-subsystem binary so no console window is ever created, regardless of how the app is launched (Task Scheduler, double-click, `dotnet run`). Nothing needs a console; file logging (§13) covers diagnostics |
 | Startup | Task Scheduler task with an "At log on" trigger (installer-registered), running as the interactive user |
 | WinRT media transport | `Windows.Media.Control` via .NET WinRT interop |
 | Audio API | `NAudio.CoreAudioApi` (MMDevice) for volume/mute; `NAudio.Wave.WasapiLoopbackCapture` for the bar graph |
-| FFT | `MathNet.Numerics` (or equivalent) for the bar graph's spectrum |
+| FFT | `NAudio.Dsp.FastFourierTransform` -- NAudio is already a dependency for the audio APIs above, so its own FFT avoids a separate `MathNet.Numerics` package. Note: NAudio's forward transform divides by N (unlike numpy's `rfft`, which the Python prototype's dB-floor/ceiling tuning assumed) -- multiply back by N before applying the window-energy normalization, or the bar graph reads as permanently near-silent |
 | Window enumeration | P/Invoke: `user32.dll` `EnumWindows`, `GetWindowText`, `IsWindowVisible`; `kernel32.dll` `GetWindowThreadProcessId` |
 | Serial port | `System.IO.Ports.SerialPort` |
 | COM port detection | `System.IO.Ports.SerialPort.GetPortNames()` + WMI `Win32_PnPEntity` for VID/PID matching |
-| Configuration | `appsettings.json` + `IOptions<T>` |
-| Logging | `Microsoft.Extensions.Logging` → rolling file sink (no Windows Event Log -- that's a service-oriented sink; a per-user app logs to `%APPDATA%`) |
+| Configuration | `appsettings.json` (+ `appsettings.Development.json` override, not shipped by the installer) + `IOptions<T>` |
+| Logging | `Microsoft.Extensions.Logging` with a custom `FileLoggerProvider` (`[ProviderAlias("File")]`) → rolling-by-date file sink under `%APPDATA%\MatricePad\logs\`. No Windows Event Log sink -- that's a service-oriented target and this runs per-user, not as a service. **Gotcha:** the generic host's filtering pipeline gates *every* provider on `Logging:LogLevel:Default` before any provider-specific rule is consulted -- a level baked into the provider itself is silently overridden. Level must be set via `Logging:File:LogLevel:Default` in config (using the alias), not a constructor argument |
+| App/installer icon | `ApplicationIcon` = `Assets\app.ico`, the same icon file the installer uses (see `docs/spec-installer.md` §4) -- one shared asset so the exe is recognizable in File Explorer/Task Manager |
 | DI container | `Microsoft.Extensions.DependencyInjection` (built-in) |
 
 ---
@@ -36,8 +38,12 @@ The Windows App is a .NET 9 console/background application that runs **per-user,
 ```
 MatricePadApp/
 ├── Program.cs
+├── MatricePadOptions.cs              # config-binding target for IOptions<T>, §4
 ├── appsettings.json
+├── appsettings.Development.json      # bumps Logging:File:LogLevel to Debug; not shipped by the installer
 ├── Worker.cs                         # Main BackgroundService loop
+├── Logging/
+│   └── FileLoggerProvider.cs         # rolling-by-date file sink, [ProviderAlias("File")] -- see §2
 ├── Services/
 │   ├── Interfaces/
 │   │   ├── ISerialManager.cs
@@ -52,8 +58,18 @@ MatricePadApp/
 │   ├── MediaInfo.cs
 │   ├── AudioState.cs
 │   └── SerialPacket.cs
-└── Native/
-    └── Win32.cs                      # P/Invoke declarations
+├── Text/                             # title-parsing logic, §10
+│   ├── AsciiSanitizer.cs             # §10.1
+│   ├── WindowTitleParser.cs          # §10.2
+│   └── WinRtTitleParser.cs           # §10.3
+├── Native/
+│   └── Win32.cs                      # P/Invoke declarations
+├── Assets/
+│   ├── app.ico                       # shared installer/app icon, see §2
+│   └── header.bmp                    # installer wizard header banner, see docs/spec-installer.md §12
+├── Package/
+│   └── Installer.nsi                 # see docs/spec-installer.md
+└── build-installer.ps1               # see docs/spec-installer.md
 ```
 
 ---

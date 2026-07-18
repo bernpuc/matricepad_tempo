@@ -1,7 +1,7 @@
 # Software Specification: Panel Firmware
-## Matrice Pad Sound Panel — ATmega32U4
+## Matrice Pad Tempo — ATmega32U4
 
-**Version:** 1.2
+**Version:** 1.3
 
 ---
 

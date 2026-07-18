@@ -1,14 +1,14 @@
 # Product Requirements Document
-## Matrice Pad Sound Panel
+## Matrice Pad Tempo
 
-**Version:** 1.3  
+**Version:** 1.4
 **Status:** Draft
 
 ---
 
 ## 1. Product Overview
 
-The Matrice Pad Sound Panel is a USB-connected hardware peripheral and companion software system that provides physical media playback controls and a real-time now-playing display for a Windows PC. The system consists of a custom ATmega32U4-based board (the **Panel**) and a background **Windows App** running on the host PC. The Panel connects via USB-C, appears to Windows as both a USB serial device and a HID consumer control device, and requires no driver installation.
+The Matrice Pad Tempo, made by Matrice Technologies, is a USB-connected hardware peripheral and companion software system that provides physical media playback controls and a real-time now-playing display for a Windows PC. It's one board in the broader Matrice Pad hardware line; "Tempo" is this board's name. The system consists of a custom ATmega32U4-based board (the **Panel**) and a background **Windows App** — branded "Matrice Pad Tempo Companion" — running on the host PC. The Panel connects via USB-C, appears to Windows as both a USB serial device and a HID consumer control device, and requires no driver installation.
 
 ---
 

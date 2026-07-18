@@ -1,7 +1,7 @@
 # Software Specification: Firmware Flasher
-## Matrice Pad Sound Panel
+## Matrice Pad Tempo
 
-**Version:** 1.0
+**Version:** 1.1
 **Status:** Concept — idea capture, not yet a committed design
 
 ---
