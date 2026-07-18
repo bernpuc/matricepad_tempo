@@ -5,3 +5,6 @@ __pycache__/
 bin/
 obj/
 publish/
+
+# NSIS installer output
+MatricePadApp/Package/*.exe
