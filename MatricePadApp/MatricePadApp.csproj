@@ -8,6 +8,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
     <UserSecretsId>dotnet-MatricePadApp-8f1c6a2e-2b5b-4c3b-9e9a-3f7d6a1c9b4e</UserSecretsId>
+    <!-- WinExe (not the Worker SDK default of Exe) so no console window is ever
+         created, regardless of how the app is launched (Task Scheduler, double-click,
+         dotnet run). This is a headless background service; there's nothing for a
+         console window to usefully show, and file logging already covers diagnostics. -->
+    <OutputType>WinExe</OutputType>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
