@@ -12,6 +12,8 @@
 
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
             <Button x:Name="CheckButton" Content="Check Firmware Version" Padding="10,4" Click="CheckButton_Click"/>
+            <Button x:Name="FlashButton" Content="Update Firmware Now" Padding="10,4" Margin="8,0,0,0"
+                    Visibility="Collapsed" Click="FlashButton_Click"/>
         </StackPanel>
 
         <StackPanel Grid.Row="1" x:Name="CandidatePanel" Visibility="Collapsed" Margin="0,0,0,10">

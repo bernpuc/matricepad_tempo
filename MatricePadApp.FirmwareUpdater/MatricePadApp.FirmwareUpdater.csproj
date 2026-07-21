@@ -14,4 +14,10 @@
     <ProjectReference Include="..\MatricePad.SerialCore\MatricePad.SerialCore.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Bundled prebuilt .hex + avrdude, per docs/spec-firmwareUpdater.md §3:
+         no arduino-cli/avr109-from-scratch dependency needed at flash time. -->
+    <None Include="Firmware\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
