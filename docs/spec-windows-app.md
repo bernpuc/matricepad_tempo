@@ -171,9 +171,9 @@ interface ISerialManager
 **`SerialManager` behavior:**
 
 - On `Send()`: if not connected, attempt to connect first. Write ASCII-encoded bytes.
-- Connection establishment: iterate known VID:PID pairs via WMI `Win32_PnPEntity` to find the COM port. If `ComPort` is set in config, use it directly. Retry up to 5 times with `ReconnectDelayMs` delay. Wait 2 seconds after opening before sending.
-- If a `SerialException` is thrown during `Send()`, close the port and mark as disconnected. The next `Send()` call will reconnect.
-- Read loop: a background thread calls `ReadLine()` in a loop. Any non-empty line received is raised via `LineReceived` and logged at Debug level -- the Panel has no operational commands to send back, so this exists purely for diagnostic visibility.
+- Connection establishment: `MatricePad.SerialCore`'s `ArduinoPortFinder.FindCandidates()` iterates known VID:PID pairs via WMI `Win32_PnPEntity` to find the COM port (`SerialManager` takes the first match; the firmware updater's multi-board disambiguation needs the full list, hence the shared library). If `ComPort` is set in config, use it directly. Retry up to 5 times with `ReconnectDelayMs` delay. Port is opened via `ArduinoSerial.Open()`, which asserts DTR/RTS explicitly -- the board's CDC stack can otherwise leave incoming data unacknowledged (see `CLAUDE.md`'s "Serial Port Gotchas"). Wait 2 seconds after opening (the board resets on open and needs its own boot delay) before performing the version handshake (`MatricePad.SerialCore`'s `FirmwareHandshake.Perform()` -- see `CLAUDE.md`'s Serial Protocol section) and starting the read loop.
+- If an IO-related exception is thrown during `Send()`, close the port and mark as disconnected. The next `Send()` call will reconnect.
+- Read loop: a background thread calls `ReadLine()` in a loop. Any non-empty line received is raised via `LineReceived` and logged at Debug level -- the Panel has no operational commands to send back during normal operation, so this exists purely for diagnostic visibility. Catches *all* exceptions, not just IO-related ones: a concurrent `Send()` failure can `Close()` the same port out from under a blocked `ReadLine()` call on another thread, throwing `ObjectDisposedException` -- letting any exception escape this background thread crashes the whole process (observed directly during development), so nothing here can be allowed to go uncaught.
 
 ---
 

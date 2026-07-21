@@ -1,7 +1,7 @@
 # Software Specification: Panel Firmware
 ## Matrice Pad Tempo — ATmega32U4
 
-**Version:** 1.3
+**Version:** 1.4
 
 ---
 
@@ -148,7 +148,9 @@ In 3-line mode: `scroll[0]` = artist only.
 
 Format: `song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSec\n` (ASCII, newline-terminated)
 
-Parsing on receipt of `\n`:
+**Version handshake, checked first:** if the received line is exactly `VERSION?` (no `||` at all), respond immediately with `PONG||<PROTOCOL_VERSION>||<FIRMWARE_VERSION>\n` and skip the normal parse below for that line. See `CLAUDE.md`'s Serial Protocol section and `docs/spec-firmwareUpdater.md` for the host side of this exchange. `PROTOCOL_VERSION` (int, bump only on wire-format changes) and `FIRMWARE_VERSION` (string, diagnostic only) are `#define`d near the top of the sketch.
+
+Parsing on receipt of `\n` (any line that isn't `VERSION?`):
 1. Find 7 `||` separators the same way as before (each search starting 2 chars past the previous one), isolating 8 fields: `songTitle`, `newArtist`, `volume`, `newMuted`, `isPaused`, `barsBlob`, `elapsedSec`, `durationSec`
 2. Reject packet if any separator is missing
 3. Extract `volume`, `newMuted` (non-zero = true), `isPaused` (non-zero = true), `elapsedSec`, `durationSec` as ints

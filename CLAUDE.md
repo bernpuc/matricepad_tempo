@@ -7,9 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MatricePad Tempo is a two-component embedded system:
 
 - **Arduino firmware** (`arduino/matrice_pad_tempo/matrice_pad_tempo.ino`) — runs on the Matrice Pro board. Drives a 128×32 OLED (song/artist text view or a 16-bar frequency graph, toggled by the encoder's pushbutton), reads a rotary encoder for volume control, handles a 2×2 keypad matrix that sends HID consumer media keys, and communicates with the PC over USB serial at 115200 baud.
-- **Windows host** — polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and sends it all to the Arduino; there is no data sent back from the Arduino (volume/media keys go straight to Windows via HID). Two implementations exist:
+- **Windows host** — polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and sends it all to the Arduino; there is no data sent back from the Arduino during normal operation (volume/media keys go straight to Windows via HID) except for the version handshake described below. Two implementations exist:
   - **`MatricePadApp/`** (.NET 10) — the active production host, installed via its NSIS installer (`MatricePadApp/build-installer.ps1`) as a Task Scheduler "at logon" task. Design doc: `docs/spec-windows-app.md`.
   - **`template.py`** / `tempo_core/` (Python) — the original implementation. Retained in the repo for reference; no longer runs at startup. The wire protocol and behavior described throughout this file (serial framing, media-source priority, COM-init stagger, etc.) apply to both implementations — `MatricePadApp` is a from-scratch C# port of the same design, not a different protocol.
+- **`MatricePad.SerialCore/`** — a small shared .NET class library holding logic that must not drift between `MatricePadApp` and `MatricePadApp.FirmwareUpdater` (below): VID:PID board discovery, the DTR/RTS-aware `SerialPort` open pattern, and the `VERSION?`/`PONG` handshake. See its "Serial Port Gotchas" note below before touching either consumer's connection code.
+- **`MatricePadApp.FirmwareUpdater/`** (.NET 10, WPF) — a separate, manually-launched tool that checks the connected board's firmware version and can flash the bundled firmware if it's out of date. Design doc: `docs/spec-firmwareUpdater.md`. Not installed/wired into the NSIS installer yet (deferred, see that doc §7) — run via `dotnet run` from the project folder for now.
 
 ## Code Organization
 
@@ -26,6 +28,14 @@ Because `arduino-cli` doesn't resolve libraries outside the sketchbook by defaul
 ./arduino/build.ps1 -Sketch arduino/matrice_pad_tempo
 ./arduino/build.ps1 -Sketch arduino/matrice_pad_tempo -Port COM7   # compile + upload
 ```
+
+## Serial Port Gotchas (`MatricePad.SerialCore`)
+
+Found the hard way while building the version handshake and firmware updater — both consumers of `MatricePad.SerialCore` rely on these, don't reintroduce them by opening a `SerialPort` some other way:
+
+- **DTR/RTS must be explicitly asserted.** `.NET`'s `SerialPort.DtrEnable`/`RtsEnable` default to `false`. The board's native-USB CDC stack can leave incoming data unacknowledged until DTR is actively asserted — the port opens without error, but the board never receives a single byte, and whether it happens to work anyway depends on leftover driver state from a prior session (this caused real, confusing intermittent failures before the fix). `ArduinoSerial.Open()` sets both on every open; don't construct a bare `new SerialPort(...)` against this board elsewhere.
+- **The bootloader is a different USB device than the running sketch, with its own COM port and its own VID:PID.** Entering the bootloader (the 1200bps touch) does not mean the same port name reappears — it must be rediscovered by VID:PID, same as the application-mode board.
+- **This board's bootloader identifies as a SparkFun Pro Micro bootloader (`1B4F:9205`), not an Arduino Leonardo bootloader (`2341:0036`).** The sketch is compiled with the `arduino:avr:leonardo` FQBN (same ATmega32U4 chip/protocol), so application mode enumerates as "Arduino Leonardo" (`2341:8036`) — but the underlying hardware is a SparkFun Pro Micro, and its bootloader keeps SparkFun's own USB identity regardless of which FQBN compiled the sketch running on it. `MatricePadApp.FirmwareUpdater` checks both `1B4F:9205` and `2341:0036` for this reason.
 
 ## Serial Protocol
 
@@ -67,6 +77,16 @@ dotnet run                     # run directly, no install
 
 COM port is auto-detected by USB VID:PID via WMI; override via `appsettings.json`'s `MatricePad:ComPort`. Logs go to `%APPDATA%\MatricePad\logs\`.
 
+## Running the Firmware Updater (`MatricePadApp.FirmwareUpdater/`)
+
+```powershell
+./MatricePadApp.FirmwareUpdater/stage-firmware.ps1   # regenerates Firmware/ (gitignored build artifact + vendored avrdude) -- run this first, or after any .ino change
+cd MatricePadApp.FirmwareUpdater
+dotnet run
+```
+
+Stops the running `MatricePadApp` companion (needs exclusive port access), detects the connected board, checks its firmware version via the handshake above, and offers to flash the bundled `.hex` if it's out of date -- always with explicit confirmation, never automatically. Restarts the companion afterward regardless of outcome. Design doc: `docs/spec-firmwareUpdater.md`.
+
 ## Running the Python Script (legacy, reference only)
 
 The venv is at `.venv310/` (Python 3.10 — required for winrt cp310 wheels). Not run at startup anymore -- kept for comparison/debugging. Activate and run:
@@ -104,6 +124,8 @@ Required in the Arduino IDE / library manager:
 Target board: **Arduino Pro Micro (ATmega32U4, 5V/16MHz)**. In Arduino IDE select *SparkFun Pro Micro 5V/16MHz* or *Arduino Leonardo* (same chip). Upload baud rate is 57600 via avr109 bootloader.
 
 **Upload tip:** The Pro Micro resets its USB after a new sketch starts. If the port disappears after flashing, click Upload in the IDE and double-tap the reset pin the moment "Uploading..." appears — the IDE will catch the 8-second bootloader window on COM7.
+
+**Bootloader USB identity:** this board's bootloader enumerates as a SparkFun Pro Micro bootloader (VID:PID `1B4F:9205`), a different device from the running sketch's Arduino Leonardo identity (`2341:8036`) — see "Serial Port Gotchas" above. Relevant if you're ever scripting bootloader detection directly instead of going through `arduino-cli`/`MatricePadApp.FirmwareUpdater`.
 
 Pin assignments: OLED on SDA=2/SCL=3, encoder on CLK=20/DT=21/BTN=19, keypad rows on 14,15 and columns on 10,16.
 

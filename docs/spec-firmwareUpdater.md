@@ -1,8 +1,8 @@
 # Software Specification: Firmware Updater
 ## Matrice Pad Tempo
 
-**Version:** 1.0
-**Status:** Committed design — supersedes the version-check/UX-flow portions of `docs/spec-flasher.md` (still "Concept" status); the OTA/remote-package question in that doc's §9 remains open and out of scope here too.
+**Version:** 1.1
+**Status:** Implemented and verified live against real hardware — version check flow (§5) and flash flow (§6) both shipped. Supersedes the version-check/UX-flow portions of `docs/spec-flasher.md` (still "Concept" status); the OTA/remote-package question in that doc's §9 remains open and out of scope here too. Installer integration (§7) and the Start Menu shortcut (§8) are **not yet implemented**.
 
 ---
 
@@ -36,22 +36,29 @@ Both `MatricePadApp.FirmwareUpdater.csproj` and `MatricePadApp.csproj` reference
 
 ## 3. Firmware Package Bundling
 
-- A prebuilt `.hex`, compiled once via `arduino/build.ps1`'s compile-only path (no `-Port`) as a step in `build-installer.ps1`, copied into the Updater's own publish output. Version-tagged to match `FIRMWARE_VERSION` in the `.ino` (currently `"1.1.0"`).
-- A SHA-256 checksum alongside it, verified before flashing — a corrupted flash is a much worse failure mode than a corrupted software update (`spec-flasher.md` §5).
-- **`avrdude.exe` + `avrdude.conf` bundled directly**, shelled out to with the same arguments `arduino/build.ps1` already generates successfully (used repeatedly and successfully this very session, including recovering the board after a freeze).
+**As implemented:** `MatricePadApp.FirmwareUpdater/stage-firmware.ps1` regenerates a gitignored `Firmware/` folder (not `build-installer.ps1` -- that's still installer-specific and untouched):
+- Compiles the `.ino` via `arduino-cli` directly (same FQBN/libraries as `arduino/build.ps1`), reads `FIRMWARE_VERSION` out of the sketch source, and names the staged `.hex` after it (`matrice_pad_tempo-<version>.hex`) so the filename can never silently drift from what was actually compiled.
+- Copies `avrdude.exe`/`avrdude.conf` from arduino-cli's own local install (`%LOCALAPPDATA%\Arduino15\packages\arduino\tools\avrdude\<version>\`) rather than requiring a separate download -- the same binary `arduino-cli`/`arduino/build.ps1` already shell out to.
+- `Firmware/` is gitignored, matching the existing convention for build artifacts (the installer's own `.exe` output) plus a vendored third-party binary -- run the script before building/publishing the Updater, don't commit its output.
 
-**This deviates from `spec-flasher.md` §2's recommendation** (native C# avr109 client, for a single-signed-binary distribution story). Reasoning for the change:
-- We already have a proven, working avrdude invocation in this repo, exercised live multiple times this session — implementing avr109 from scratch is real protocol work (page writes, per-page verify, chip-specific quirks avrdude's config already handles) that isn't worth the risk for a personal-scale tool.
+`MainWindow.xaml.cs`'s `ExpectedProtocolVersion`/`ExpectedFirmwareVersion`/`BundledHexFileName` constants must be kept in sync with the `.ino`'s `PROTOCOL_VERSION`/`FIRMWARE_VERSION` by hand for now -- `stage-firmware.ps1` prints a reminder if they might have drifted. Reading these from a manifest instead is still a TODO, not yet worth it with only one firmware build to track.
+
+**Not implemented:** a SHA-256 checksum check on the bundled `.hex` before flashing (`spec-flasher.md` §5's suggestion). Skipped for now because the `.hex` is compiled locally and staged immediately before use, with no download/OTA step in between to protect against -- there's no untrusted transfer for a checksum to catch yet. Revisit if/when an OTA distribution path (still out of scope, §10) is ever added.
+
+**`avrdude.exe` + `avrdude.conf` bundled** (via the staging script above), shelled out to with the same arguments `arduino-cli`'s own `platform.txt` recipe generates for a Leonardo (`-patmega32u4 -cavr109 -b57600 -D`, confirmed by reading `platform.txt`/`boards.txt` directly rather than guessing) — this deviates from `spec-flasher.md` §2's recommendation (native C# avr109 client, for a single-signed-binary distribution story). Reasoning for the change:
+- We already have a proven, working avrdude invocation in this repo, exercised live multiple times — implementing avr109 from scratch is real protocol work (page writes, per-page verify, chip-specific quirks avrdude's config already handles) that isn't worth the risk for a personal-scale tool.
 - Code signing isn't done for *any* binary in this project yet (`spec-installer.md` §13 — "not yet done"). Bundling one more unsigned binary doesn't change the current security posture; revisit this choice together if/when signing is finally set up.
 
 ---
 
 ## 4. Bootloader Entry
 
-Same two-step approach `spec-flasher.md` §3 already laid out, now informed by this session's DTR finding:
+Two-step approach, per `spec-flasher.md` §3, refined by testing live against the real board:
 
-1. **Automatic 1200bps touch:** open then close the port at 1200 baud. This is exactly the same DTR-driven reset mechanism `arduino-cli`/`avrdude` already rely on for Leonardo-class boards — the same control-line assertion this session found is also required for *normal* data flow.
-2. **Manual fallback:** if the bootloader's COM port doesn't reappear within ~20s (matching `arduino/build.ps1`'s own discovery timeout), prompt: *"Double-tap the reset button on the board now,"* with a visible countdown, rather than promising a silent hands-off update — this was already found unreliable on the real hardware during earlier development.
+1. **Automatic 1200bps touch:** open then close the port at 1200 baud, then **discover the bootloader's own port by VID:PID rather than waiting for the same COM port name to reappear.** The bootloader is a distinct USB device from the running sketch, with its own enumeration — assuming the same port name reappears was tried first and failed outright (avrdude connected to the wrong, stale port). Worse, the VID:PID to search for isn't the obvious one either: this board's bootloader identifies as a **SparkFun Pro Micro bootloader (`1B4F:9205`)**, not an **Arduino Leonardo bootloader (`2341:0036`)** — the sketch is compiled with the `arduino:avr:leonardo` FQBN (same chip/protocol) so the *application*-mode board enumerates as "Arduino Leonardo" (`2341:8036`), but the bootloader itself keeps SparkFun's own identity regardless of which FQBN compiled what's currently flashed. The implementation checks both VID:PIDs so it also works against an actual Arduino-brand Leonardo. See `CLAUDE.md`'s "Serial Port Gotchas" for the general version of this note.
+2. **Manual fallback:** if no bootloader-identity port appears within ~20s (matching `arduino/build.ps1`'s own discovery timeout), log: *"Double-tap the reset button on the board now, then click 'Update Firmware Now' again."* As implemented this is a log message plus a re-clickable button, not a live countdown UI — simpler than originally envisioned, sufficient in practice. The automatic touch was confirmed unreliable on this hardware during live testing, exactly as `spec-flasher.md` §3 already anticipated from earlier development experience — budget for the manual-button-press path being the common case, not a rare fallback.
+
+**Control-flow note, found only by testing the retry path live:** the companion must stay stopped, and the "Update Firmware Now" button must stay clickable, across a manual-retry cycle — an earlier version of this flow restarted the companion and hid the button as soon as the automatic touch failed, which re-locked the port and disabled the retry path at exactly the moment the user needed both to still be available.
 
 ---
 
@@ -70,15 +77,14 @@ Same two-step approach `spec-flasher.md` §3 already laid out, now informed by t
 
 ## 6. Update Flow (explicit confirmation required)
 
-1. User confirms the offered update.
-2. `taskkill /F /IM MatricePadApp.exe` — stop the running companion so avrdude can get exclusive access to the port. (Unlike the installer's uninstall path, the scheduled task itself is *not* deleted — this is a temporary pause, not a removal.)
-3. Verify the bundled `.hex`'s checksum (§3).
-4. Bootloader entry (§4).
-5. Flash via `avrdude`, streaming its console output live into the tool's own window so a failure is visible, not silent.
-6. avrdude resets the board out of the bootloader automatically at the end of a normal invocation.
-7. Re-run the version check (§5) to confirm the new version is now reported.
-8. `schtasks /Run /TN MatricePadApp` — restart the companion.
-9. Report success/failure clearly. On failure: *"Update failed, but your board is safe — the bootloader is protected and can't be damaged by this. Just try again."* (`spec-flasher.md` §7 — a normal avr109 application flash never touches the Caterina bootloader's protected boot section, so a failed/interrupted flash just leaves the application section to retry, not a bricked board.)
+1. User confirms the offered update (clicks "Update Firmware Now").
+2. `taskkill /F /IM MatricePadApp.exe` — stop the running companion so avrdude can get exclusive access to the port. (Unlike the installer's uninstall path, the scheduled task itself is *not* deleted — this is a temporary pause, not a removal.) Already done as part of the version check (§5) that preceded this, so this step is really "stays stopped," not a fresh stop.
+3. Bootloader entry (§4). If the automatic touch fails, log the manual-reset instructions and return, keeping the companion stopped and the button clickable for a retry — no restart happens yet.
+4. Flash via `avrdude`, streaming its console output live into the tool's own window so a failure is visible, not silent.
+5. avrdude resets the board out of the bootloader automatically at the end of a normal invocation.
+6. Re-discover the application-mode port by VID:PID (not the pre-flash port name, for the same reason as §4) and re-run the version check (§5) to confirm the new version is now reported.
+7. `schtasks /Run /TN MatricePadApp` — restart the companion, but only once the flow has actually finished (terminal success or terminal failure) rather than while a manual-reset retry is still pending (§4's control-flow note).
+8. Report success/failure clearly. On failure: *"Update failed, but your board is safe — the bootloader is protected and can't be damaged by this. Just try again."* (`spec-flasher.md` §7 — a normal avr109 application flash never touches the Caterina bootloader's protected boot section, so a failed/interrupted flash just leaves the application section to retry, not a bricked board.)
 
 ---
 
