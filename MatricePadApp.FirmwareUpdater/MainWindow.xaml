@@ -1,0 +1,28 @@
+<Window x:Class="MatricePadApp.FirmwareUpdater.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MatricePad Firmware Updater" Height="420" Width="520"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button x:Name="CheckButton" Content="Check Firmware Version" Padding="10,4" Click="CheckButton_Click"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" x:Name="CandidatePanel" Visibility="Collapsed" Margin="0,0,0,10">
+            <TextBlock Text="More than one matching board was found. Pick the one to check:" Margin="0,0,0,6"/>
+            <ListBox x:Name="CandidateList" Height="80"/>
+            <Button x:Name="CheckSelectedButton" Content="Check Selected Board" Padding="10,4"
+                    HorizontalAlignment="Left" Margin="0,6,0,0" Click="CheckSelectedButton_Click"/>
+        </StackPanel>
+
+        <TextBox Grid.Row="2" x:Name="OutputLog" IsReadOnly="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12"
+                 Background="#FF1E1E1E" Foreground="#FFDCDCDC" Padding="6"/>
+    </Grid>
+</Window>
