@@ -11,9 +11,15 @@ param(
 Write-Host "Building Matrice Pad Sound Panel Installer..." -ForegroundColor Cyan
 
 $projectDir = $PSScriptRoot
+$repoRoot = Split-Path -Parent $projectDir
 $csprojPath = Join-Path $projectDir "MatricePadApp.csproj"
 $nsiPath = Join-Path $projectDir "Package\Installer.nsi"
 $publishDir = Join-Path $projectDir "publish\win-x64"
+
+$updaterProjectDir = Join-Path $repoRoot "MatricePadApp.FirmwareUpdater"
+$updaterCsprojPath = Join-Path $updaterProjectDir "MatricePadApp.FirmwareUpdater.csproj"
+$updaterPublishDir = Join-Path $updaterProjectDir "publish\win-x64"
+$stageFirmwareScript = Join-Path $updaterProjectDir "stage-firmware.ps1"
 
 # Read version from .csproj
 Write-Host "Reading version from $csprojPath..." -ForegroundColor Yellow
@@ -41,6 +47,29 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Publish successful!" -ForegroundColor Green
+
+# Stage the Firmware Updater's bundled .hex/avrdude, then publish it
+# self-contained too -- same zero-prerequisite policy as MatricePadApp above.
+Write-Host "`nStaging firmware/avrdude for the Firmware Updater..." -ForegroundColor Yellow
+& $stageFirmwareScript
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Firmware staging failed!" -ForegroundColor Red
+    exit 1
+}
+
+if (Test-Path $updaterPublishDir) {
+    Remove-Item -Recurse -Force $updaterPublishDir
+}
+
+Write-Host "`nPublishing Firmware Updater self-contained win-x64 in $Configuration mode..." -ForegroundColor Yellow
+dotnet publish $updaterCsprojPath -c $Configuration -r win-x64 --self-contained true -o $updaterPublishDir
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Firmware Updater publish failed!" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "Firmware Updater publish successful!" -ForegroundColor Green
 
 # Find NSIS
 $nsisPath = $null

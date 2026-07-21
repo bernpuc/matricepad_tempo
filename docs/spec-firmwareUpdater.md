@@ -1,8 +1,8 @@
 # Software Specification: Firmware Updater
 ## Matrice Pad Tempo
 
-**Version:** 1.1
-**Status:** Implemented and verified live against real hardware — version check flow (§5) and flash flow (§6) both shipped. Supersedes the version-check/UX-flow portions of `docs/spec-flasher.md` (still "Concept" status); the OTA/remote-package question in that doc's §9 remains open and out of scope here too. Installer integration (§7) and the Start Menu shortcut (§8) are **not yet implemented**.
+**Version:** 1.2
+**Status:** Implemented and verified live against real hardware — version check flow (§5), flash flow (§6), and the Start Menu shortcut (§8) are all shipped and installer-tested end to end. Supersedes the version-check/UX-flow portions of `docs/spec-flasher.md` (still "Concept" status); the OTA/remote-package question in that doc's §9 remains open and out of scope here too. §7's Finish-page integration remains deliberately deferred, per that section's own reasoning.
 
 ---
 
@@ -96,15 +96,26 @@ Two-step approach, per `spec-flasher.md` §3, refined by testing live against th
 
 ---
 
-## 8. Start Menu Shortcut
+## 8. Start Menu Shortcut — Implemented
 
 New to this feature — the main companion app deliberately has none (`spec-installer.md` §4: "No desktop shortcut. No Start Menu entry"), but that reasoning doesn't apply here: the Updater is something the user needs to actively find and launch, unlike the always-running background service.
 
+**As implemented** (`Installer.nsi`), the Updater's self-contained publish output lives in its own `$INSTDIR\FirmwareUpdater\` subfolder rather than directly in `$INSTDIR` alongside `MatricePadApp.exe` — both are independently-published .NET apps, and keeping them apart avoids any risk of one's dependency DLLs overwriting the other's during install:
+
 ```nsis
+SetOutPath "$INSTDIR\FirmwareUpdater"
+File /r "${UPDATER_PUBLISH_DIR}\*.*"
+SetOutPath "$INSTDIR"
+
 CreateDirectory "$SMPROGRAMS\Matrice Pad Tempo Companion"
-CreateShortcut "$SMPROGRAMS\Matrice Pad Tempo Companion\Check Firmware Version.lnk" "$INSTDIR\MatricePadApp.FirmwareUpdater.exe"
+CreateShortcut "$SMPROGRAMS\Matrice Pad Tempo Companion\Check Firmware Version.lnk" "$INSTDIR\FirmwareUpdater\MatricePadApp.FirmwareUpdater.exe"
 ```
-Removed on uninstall alongside the rest of `$INSTDIR` (`spec-installer.md` §9 already recursively removes the install directory; the shortcut folder needs an explicit `RMDir` since it lives under `$SMPROGRAMS`, not `$INSTDIR`).
+
+The Updater's own publish output is produced by `build-installer.ps1`, which now also runs `MatricePadApp.FirmwareUpdater/stage-firmware.ps1` (§3) before publishing it self-contained, mirroring exactly how `MatricePadApp` itself is published.
+
+Removed on uninstall: the `FirmwareUpdater` subfolder goes with the rest of `$INSTDIR`'s recursive removal (`spec-installer.md` §9) automatically; the shortcut needs its own explicit `RMDir /r` since it lives under `$SMPROGRAMS`, not `$INSTDIR`.
+
+Verified end to end: a real silent install (`/S`) correctly staged both apps, created the shortcut, and launching the Updater from that actual shortcut (not `dotnet run`) performed a successful version check against the real board.
 
 ---
 

@@ -13,12 +13,16 @@
 !define APP_NAME "Matrice Pad Tempo Companion"
 !define TASK_NAME "MatricePadApp"
 !define EXE_NAME "MatricePadApp.exe"
+!define UPDATER_EXE_NAME "MatricePadApp.FirmwareUpdater.exe"
+!define UPDATER_DIR_NAME "FirmwareUpdater"
+!define START_MENU_DIR "$SMPROGRAMS\${APP_NAME}"
 !define INSTALL_DIR_NAME "MatricePad"
 !ifndef VERSION
   !define VERSION "1.0.0"
 !endif
 !define INSTALLER_EXE "${APP_NAME} ${VERSION} Installer.exe"
 !define PUBLISH_DIR "..\publish\win-x64" ; relative to this .nsi file -- see build-installer.ps1
+!define UPDATER_PUBLISH_DIR "..\..\MatricePadApp.FirmwareUpdater\publish\win-x64" ; see build-installer.ps1
 
 ; The installer needs elevation to register the scheduled task and write to
 ; Program Files. The app itself runs at logon with no elevation (RL LIMITED
@@ -63,6 +67,8 @@ Section "Install"
   ; (there is no WiX-style MajorUpgrade/UpgradeCode equivalent here).
   nsExec::ExecToLog 'taskkill /F /IM "${EXE_NAME}"'
   Pop $0
+  nsExec::ExecToLog 'taskkill /F /IM "${UPDATER_EXE_NAME}"'
+  Pop $0
   nsExec::ExecToLog 'schtasks /Delete /TN "${TASK_NAME}" /F'
   Pop $0
 
@@ -84,6 +90,21 @@ Section "Install"
   ; or the install folder can find out what it is and how to stop it. Always
   ; overwritten, unlike appsettings.json -- it's not user-editable state.
   File "..\README.md"
+
+  ; Firmware Updater: a separate self-contained publish output, kept in its
+  ; own subfolder so its dependency DLLs never collide with MatricePadApp's
+  ; own publish output (both are independently-published .NET apps). Always
+  ; overwritten -- it has no user-editable state of its own.
+  SetOutPath "$INSTDIR\${UPDATER_DIR_NAME}"
+  File /r "${UPDATER_PUBLISH_DIR}\*.*"
+  SetOutPath "$INSTDIR"
+
+  ; Start Menu shortcut -- unlike MatricePadApp itself (no shortcut, no
+  ; visible UI, runs silently at logon per docs/spec-installer.md §4), the
+  ; Updater is something the user needs to actively find and launch. See
+  ; docs/spec-firmwareUpdater.md §8.
+  CreateDirectory "${START_MENU_DIR}"
+  CreateShortcut "${START_MENU_DIR}\Check Firmware Version.lnk" "$INSTDIR\${UPDATER_DIR_NAME}\${UPDATER_EXE_NAME}"
 
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "UninstallString" "$INSTDIR\Uninstall.exe"
@@ -114,8 +135,14 @@ SectionEnd
 Section "Uninstall"
   nsExec::ExecToLog 'taskkill /F /IM "${EXE_NAME}"'
   Pop $0
+  nsExec::ExecToLog 'taskkill /F /IM "${UPDATER_EXE_NAME}"'
+  Pop $0
   nsExec::ExecToLog 'schtasks /Delete /TN "${TASK_NAME}" /F'
   Pop $0
+
+  ; Start Menu shortcut lives under $SMPROGRAMS, outside $INSTDIR -- the
+  ; RMDir /r below doesn't reach it, needs its own removal.
+  RMDir /r "${START_MENU_DIR}"
 
   ; Give the OS a moment to release the just-killed process's file handles
   ; before deleting -- taskkill returning doesn't guarantee handles are freed

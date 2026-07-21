@@ -1,7 +1,7 @@
 # Software Specification: Windows Installer
 ## Matrice Pad Tempo
 
-**Version:** 2.0
+**Version:** 2.1
 
 ---
 
@@ -49,9 +49,11 @@ Windows 10 version 1903 or later is still implicitly required (WinRT `GlobalSyst
 | All runtime `.dll` dependencies (self-contained publish output) | `C:\Program Files\MatricePad\` |
 | `app.ico` | Embedded in `MatricePadApp.exe` and in the installer/uninstaller exe (not a separate installed file) |
 | `README.md` | `C:\Program Files\MatricePad\` — end-user doc, see §4.1 |
+| `MatricePadApp.FirmwareUpdater.exe` + its own runtime dependencies (separate self-contained publish output) | `C:\Program Files\MatricePad\FirmwareUpdater\` — kept in its own subfolder rather than alongside `MatricePadApp.exe`'s files, since both are independently-published .NET apps and shouldn't have their dependency DLLs mixed |
+| Start Menu shortcut ("Check Firmware Version") | `$SMPROGRAMS\Matrice Pad Tempo Companion\` — launches the Firmware Updater above; see `docs/spec-firmwareUpdater.md` §8 |
 | Uninstall entry | Windows Add or Remove Programs |
 
-No desktop shortcut. No Start Menu entry. The app runs silently in the background, started by its scheduled task (§6) at logon.
+No desktop shortcut. `MatricePadApp.exe` itself still has no Start Menu entry of its own — it runs silently in the background, started by its scheduled task (§6) at logon. The one Start Menu entry that does exist launches the Firmware Updater, a separate manually-invoked tool (`docs/spec-firmwareUpdater.md`), not the companion service.
 
 `appsettings.json` is treated as user-configurable: the install section only copies it if it doesn't already exist at the destination, preserving any manual edits (e.g. a manually set `ComPort`) across upgrades. `appsettings.Development.json` is deliberately excluded from the published/installed output — it's a dev-only override (bumps file logging to Debug level) with no place in a production install.
 
@@ -119,10 +121,12 @@ Triggered from Windows **Add or Remove Programs** → **Matrice Pad Tempo Compan
 
 Uninstall sequence:
 1. `taskkill /F /IM MatricePadApp.exe` — stop the running process, if any
-2. `schtasks /Delete /TN MatricePadApp /F` — delete the scheduled task
-3. A short (500ms) sleep, giving the OS a moment to release the just-killed process's file handles — `taskkill` returning doesn't guarantee they're freed instantly
-4. `RMDir /r /REBOOTOK` on the install directory. The `/REBOOTOK` flag matters in practice: if something still has a handle open on the folder — most commonly File Explorer, which holds a directory handle just from having it open for browsing, not from any file actually being in use — a plain recursive delete can silently fail to remove the directory. `/REBOOTOK` schedules the leftover removal for the next reboot instead of abandoning it. (Observed once during manual testing: File Explorer open on the install folder blocked cleanup until this flag was added.)
-5. Remove the Add/Remove Programs registry entries
+2. `taskkill /F /IM MatricePadApp.FirmwareUpdater.exe` — stop the Firmware Updater too, if it happens to be open
+3. `schtasks /Delete /TN MatricePadApp /F` — delete the scheduled task
+4. `RMDir /r` the Start Menu shortcut folder (`$SMPROGRAMS\Matrice Pad Tempo Companion\`) — it lives outside the install directory, so step 6 below doesn't reach it
+5. A short (500ms) sleep, giving the OS a moment to release the just-killed process's file handles — `taskkill` returning doesn't guarantee they're freed instantly
+6. `RMDir /r /REBOOTOK` on the install directory (this also removes the `FirmwareUpdater\` subfolder, §4). The `/REBOOTOK` flag matters in practice: if something still has a handle open on the folder — most commonly File Explorer, which holds a directory handle just from having it open for browsing, not from any file actually being in use — a plain recursive delete can silently fail to remove the directory. `/REBOOTOK` schedules the leftover removal for the next reboot instead of abandoning it. (Observed once during manual testing: File Explorer open on the install folder blocked cleanup until this flag was added.)
+7. Remove the Add/Remove Programs registry entries
 
 `appsettings.json` is removed with the rest of the install directory on uninstall. Log files under `%APPDATA%\MatricePad\logs\` (per-user, outside the install directory) are deliberately left in place; nothing else needs cleanup.
 
@@ -200,8 +204,12 @@ Published as a downloadable asset on **GitHub Releases** (`https://github.com/be
 MatricePadApp/build-installer.ps1
   1. Read <Version> from MatricePadApp.csproj
   2. dotnet publish -c Release -r win-x64 --self-contained true -o publish\win-x64
-  3. Locate makensis.exe (checks the two standard install paths)
-  4. makensis -DVERSION=<version> Package\Installer.nsi
+  3. Run MatricePadApp.FirmwareUpdater/stage-firmware.ps1 (regenerates its
+     bundled .hex + avrdude, see docs/spec-firmwareUpdater.md §3)
+  4. dotnet publish (Firmware Updater) -c Release -r win-x64 --self-contained true
+     -o ../MatricePadApp.FirmwareUpdater/publish/win-x64
+  5. Locate makensis.exe (checks the two standard install paths)
+  6. makensis -DVERSION=<version> Package\Installer.nsi
   → MatricePadApp\Package\Matrice Pad Tempo Companion <version> Installer.exe
 ```
 
