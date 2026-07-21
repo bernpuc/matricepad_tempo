@@ -161,6 +161,16 @@ public partial class SerialManager : ISerialManager, IDisposable
                 }
                 catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
                 {
+                    _logger.LogWarning(ex, "Serial read failed, closing port so reconnect can open a fresh handle");
+                    lock (_lock)
+                    {
+                        // Only close if we're still the active port -- a concurrent
+                        // Send() failure may have already closed and reconnected.
+                        if (_port == port)
+                        {
+                            ClosePort();
+                        }
+                    }
                     break;
                 }
             }
