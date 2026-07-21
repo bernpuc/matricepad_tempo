@@ -11,8 +11,10 @@ Firmware for Matrice Pro -Tempo 1.0- boards, plus a Windows host app that feeds 
 
 This project combines:
 
-*   **Arduino Firmware:** Drives a 128×32 OLED (now-playing text or a 16-bar frequency graph), reads a rotary encoder and 2×2 keypad, and sends HID volume/media-key events straight to Windows.
+*   **Arduino Firmware:** Drives a 128×32 OLED (now-playing text or a 16-bar frequency graph), reads a rotary encoder and 2×2 keypad, and sends HID volume/media-key events straight to Windows. Also responds to a `VERSION?` handshake so the Windows host can detect a firmware/companion version mismatch.
 *   **Windows Host — `MatricePadApp/` (.NET 10, active):** Polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and streams it all to the board. Installed via an NSIS installer that registers a Task Scheduler "at logon" task — see `MatricePadApp/build-installer.ps1`.
+*   **`MatricePad.SerialCore/`:** Shared library holding board discovery (VID:PID), the DTR/RTS-aware serial connection pattern, and the version handshake — used by both `MatricePadApp/` and the Firmware Updater below, so this logic exists in exactly one place.
+*   **`MatricePadApp.FirmwareUpdater/`:** A separate tool (Start Menu shortcut after install: "Check Firmware Version") that checks the connected board's firmware version and can flash the bundled firmware if it's out of date, with explicit confirmation at every step.
 *   **Windows Host — `template.py` (Python, legacy):** The original implementation. Kept in the repo for reference; no longer runs at startup, superseded by `MatricePadApp/` above.
 
 See `docs/PRD.md` and the other `docs/spec-*.md` files for the full design, and `CLAUDE.md` for repo-specific developer notes.
@@ -73,14 +75,24 @@ cd MatricePadApp
 # then run Package\Matrice Pad Sound Panel <version> Installer.exe (prompts UAC)
 ```
 
-This installs to `C:\Program Files\MatricePad\`, registers a Task Scheduler "at logon" task, and launches immediately. To run without installing:
+This installs to `C:\Program Files\MatricePad\`, registers a Task Scheduler "at logon" task, and launches immediately. It also installs the Firmware Updater (below) and its own Start Menu shortcut. To run the companion without installing:
 
 ```powershell
 cd MatricePadApp
 dotnet run
 ```
 
-**3. Legacy (Python) — for reference/comparison only, not required for normal use:**
+**3. Firmware Updater — checks/flashes the board's firmware:**
+
+```powershell
+./MatricePadApp.FirmwareUpdater/stage-firmware.ps1   # regenerates the bundled .hex + avrdude -- run first, or after any .ino change
+cd MatricePadApp.FirmwareUpdater
+dotnet run
+```
+
+Stops the running companion (needs exclusive access to the board's serial port), checks the connected board's firmware version, and offers to flash the bundled firmware if it's out of date — always with explicit confirmation. See `docs/spec-firmwareUpdater.md`.
+
+**4. Legacy (Python) — for reference/comparison only, not required for normal use:**
 
 ```powershell
 .\.venv310\Scripts\Activate.ps1
