@@ -1,13 +1,12 @@
 using System.IO.Ports;
-using System.Management;
-using System.Text.RegularExpressions;
+using MatricePad.SerialCore;
 using MatricePadApp.Services.Interfaces;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace MatricePadApp.Services;
 
-public partial class SerialManager : ISerialManager, IDisposable
+public class SerialManager : ISerialManager, IDisposable
 {
     // Mirrors PROTOCOL_VERSION in matrice_pad_tempo.ino -- bump both together
     // whenever SerialPacket's wire format (field count/order) changes.
@@ -75,16 +74,7 @@ public partial class SerialManager : ISerialManager, IDisposable
             {
                 try
                 {
-                    // DtrEnable/RtsEnable default to false in .NET's SerialPort, but
-                    // the Leonardo's native-USB CDC stack can leave incoming data
-                    // unacknowledged until DTR is actively asserted -- observed as
-                    // the port opening fine but the board never receiving a single
-                    // byte. Must be set explicitly; leftover driver state from a
-                    // prior session is not something to rely on.
-                    var port = new SerialPort(portName, _options.BaudRate) { NewLine = "\n", ReadTimeout = 500 };
-                    port.DtrEnable = true;
-                    port.RtsEnable = true;
-                    port.Open();
+                    var port = ArduinoSerial.Open(portName, _options.BaudRate);
                     _port = port;
                     _logger.LogInformation("Serial connection established on {Port}", portName);
                     // Opening the port resets the board, and its own setup() has a
@@ -116,93 +106,32 @@ public partial class SerialManager : ISerialManager, IDisposable
     // blocks the connection.
     private void PerformVersionHandshake(SerialPort port)
     {
-        var originalTimeout = port.ReadTimeout;
-        try
+        var result = FirmwareHandshake.Perform(port);
+        switch (result.Outcome)
         {
-            port.DiscardInBuffer();
-            port.ReadTimeout = 1500;
-
-            var bytes = System.Text.Encoding.ASCII.GetBytes("VERSION?\n");
-            port.Write(bytes, 0, bytes.Length);
-
-            var line = port.ReadLine();
-            var parts = line.Split("||");
-            if (parts.Length == 3 && parts[0] == "PONG" && int.TryParse(parts[1], out var protocolVersion))
-            {
-                var firmwareVersion = parts[2];
-                if (protocolVersion == ExpectedProtocolVersion)
-                {
-                    _logger.LogInformation(
-                        "Firmware handshake OK: protocol {Protocol}, firmware {Firmware}", protocolVersion, firmwareVersion);
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "Firmware protocol version mismatch: companion expects {Expected}, board reports {Actual} (firmware {Firmware})",
-                        ExpectedProtocolVersion, protocolVersion, firmwareVersion);
-                }
-            }
-            else
-            {
-                _logger.LogWarning("Unrecognized firmware handshake response: {Line}", line);
-            }
-        }
-        catch (TimeoutException)
-        {
-            _logger.LogInformation("No handshake response from firmware (older firmware without version support?)");
-        }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
-        {
-            _logger.LogWarning(ex, "Firmware handshake failed");
-        }
-        finally
-        {
-            port.ReadTimeout = originalTimeout;
+            case HandshakeOutcome.Success when result.ProtocolVersion == ExpectedProtocolVersion:
+                _logger.LogInformation(
+                    "Firmware handshake OK: protocol {Protocol}, firmware {Firmware}", result.ProtocolVersion, result.FirmwareVersion);
+                break;
+            case HandshakeOutcome.Success:
+                _logger.LogWarning(
+                    "Firmware protocol version mismatch: companion expects {Expected}, board reports {Actual} (firmware {Firmware})",
+                    ExpectedProtocolVersion, result.ProtocolVersion, result.FirmwareVersion);
+                break;
+            case HandshakeOutcome.NoResponse:
+                _logger.LogInformation("No handshake response from firmware (older firmware without version support?)");
+                break;
+            case HandshakeOutcome.UnrecognizedResponse:
+                _logger.LogWarning("Unrecognized firmware handshake response: {Line}", result.RawResponse);
+                break;
+            case HandshakeOutcome.Error:
+                _logger.LogWarning(result.Error, "Firmware handshake failed");
+                break;
         }
     }
 
-    private string? FindArduinoPort()
-    {
-        try
-        {
-            using var searcher = new ManagementObjectSearcher(
-                "SELECT * FROM Win32_PnPEntity WHERE Caption LIKE '%(COM%'");
-            foreach (ManagementBaseObject device in searcher.Get())
-            {
-                var pnpId = device["PNPDeviceID"]?.ToString() ?? "";
-                var caption = device["Caption"]?.ToString() ?? "";
-                foreach (var vidPid in _options.ArduinoVidPidList)
-                {
-                    var parts = vidPid.Split(':');
-                    if (parts.Length != 2)
-                    {
-                        continue;
-                    }
-
-                    if (!pnpId.Contains($"VID_{parts[0]}", StringComparison.OrdinalIgnoreCase) ||
-                        !pnpId.Contains($"PID_{parts[1]}", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    var m = ComPortInCaption().Match(caption);
-                    if (m.Success)
-                    {
-                        return m.Groups[1].Value;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "WMI COM port lookup failed");
-        }
-
-        return null;
-    }
-
-    [GeneratedRegex(@"\((COM\d+)\)")]
-    private static partial Regex ComPortInCaption();
+    private string? FindArduinoPort() =>
+        ArduinoPortFinder.FindCandidates(_options.ArduinoVidPidList).FirstOrDefault()?.PortName;
 
     private void StartReadLoop()
     {

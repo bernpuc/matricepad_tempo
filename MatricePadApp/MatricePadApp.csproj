@@ -20,7 +20,10 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="System.IO.Ports" Version="10.0.0" />
-    <PackageReference Include="System.Management" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MatricePad.SerialCore\MatricePad.SerialCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>
