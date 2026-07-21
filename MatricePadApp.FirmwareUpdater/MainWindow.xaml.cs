@@ -345,6 +345,7 @@ public partial class MainWindow : Window
         AppendLog("Restarting the MatricePad companion...");
         RunProcess("schtasks.exe", $"/Run /TN \"{CompanionTaskName}\"");
         _companionStopped = false;
+        AppendLog("You can now close this window.");
     }
 
     private static void RunProcess(string exe, string args)
