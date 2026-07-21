@@ -29,7 +29,7 @@ Because `arduino-cli` doesn't resolve libraries outside the sketchbook by defaul
 
 ## Serial Protocol
 
-Messages are newline-terminated (`\n`), sent PC → Arduino only (the baseline sketch's encoder button no longer round-trips app-volume commands — see below).
+Messages are newline-terminated (`\n`), sent PC → Arduino only (the baseline sketch's encoder button no longer round-trips app-volume commands — see below), except for the version handshake below, which is the one request/response exchange on the baseline sketch.
 
 **Baseline sketch** (`matrice_pad_tempo.ino` / `template.py`):
 ```
@@ -45,6 +45,8 @@ song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSe
 | `elapsedSec`, `durationSec` | WinRT-only; both `0` when no timeline is available (non-browser source, nothing playing) |
 
 The encoder button toggles the Arduino between a **TEXT** view (song/artist, scrolling) and a **BARS** view (the 16-bar graph + elapsed/duration in the upper-right) — both are always kept up to date from the same packet regardless of which is on-screen.
+
+**Version handshake** (baseline sketch only): once per connection, right after opening the port, `MatricePadApp`'s `SerialManager` sends a bare `VERSION?` line and firmware responds `PONG||<protocolVersion>||<firmwareVersion>` (e.g. `PONG||1||1.1.0`). `protocolVersion` is the wire-format version (`PROTOCOL_VERSION` in the `.ino` / `ExpectedProtocolVersion` in `SerialManager.cs`) — bump both together whenever the baseline packet's field count/order changes; `firmwareVersion` is a human-readable sketch version, diagnostic only. A mismatch is logged as a warning but never blocks the connection; firmware that predates this feature just ignores the unrecognized `VERSION?` line (it has no `||`, so it falls through the existing parser harmlessly) and the companion logs that no handshake response arrived, then proceeds normally.
 
 **Spectrum sketch** (`matrice_pad_tempo_spectrum.ino` / `spectrum_main.py`) — standalone, bars-only, simpler wire format with no song/artist/volume fields:
 ```

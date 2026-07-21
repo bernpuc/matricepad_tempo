@@ -41,6 +41,15 @@ using namespace TempoCore;
 #define MAX_SERIAL_BUFFER     384
 #define MAX_FIELD_LEN          96
 
+// ── Version handshake ────────────────────────────────────────────────────────
+// The companion sends a bare "VERSION?" line (no "||") after opening the port;
+// old firmware without this block just falls through the normal parse and
+// ignores it, same as any other malformed line. PROTOCOL_VERSION only bumps
+// when the wire format itself (field count/order) changes; FIRMWARE_VERSION
+// is diagnostic only.
+#define PROTOCOL_VERSION 1
+#define FIRMWARE_VERSION "1.1.0"
+
 // ── Bar layout (BARS view) ────────────────────────────────────────────────────
 // 16 bars * 8px slot (6px bar + 2px gap) = 128px, exactly fills the screen width.
 // Same constants as the standalone spectrum sketch.
@@ -272,6 +281,14 @@ void handleSerialInput() {
         char c = Serial.read();
         if (c == '\n') {
             inputBuffer[inputLen] = '\0';
+
+            if (strcmp(inputBuffer, "VERSION?") == 0) {
+                char resp[40];
+                snprintf(resp, sizeof(resp), "PONG||%d||%s\n", PROTOCOL_VERSION, FIRMWARE_VERSION);
+                Serial.print(resp);
+                inputLen = 0;
+                continue;
+            }
 
             char *pTitle    = inputBuffer;
             char *pArtist   = nullptr;

@@ -9,6 +9,10 @@ namespace MatricePadApp.Services;
 
 public partial class SerialManager : ISerialManager, IDisposable
 {
+    // Mirrors PROTOCOL_VERSION in matrice_pad_tempo.ino -- bump both together
+    // whenever SerialPacket's wire format (field count/order) changes.
+    private const int ExpectedProtocolVersion = 1;
+
     private readonly MatricePadOptions _options;
     private readonly ILogger<SerialManager> _logger;
     private readonly Lock _lock = new();
@@ -71,11 +75,24 @@ public partial class SerialManager : ISerialManager, IDisposable
             {
                 try
                 {
+                    // DtrEnable/RtsEnable default to false in .NET's SerialPort, but
+                    // the Leonardo's native-USB CDC stack can leave incoming data
+                    // unacknowledged until DTR is actively asserted -- observed as
+                    // the port opening fine but the board never receiving a single
+                    // byte. Must be set explicitly; leftover driver state from a
+                    // prior session is not something to rely on.
                     var port = new SerialPort(portName, _options.BaudRate) { NewLine = "\n", ReadTimeout = 500 };
+                    port.DtrEnable = true;
+                    port.RtsEnable = true;
                     port.Open();
                     _port = port;
                     _logger.LogInformation("Serial connection established on {Port}", portName);
+                    // Opening the port resets the board, and its own setup() has a
+                    // ~2s startup delay before it's reading serial at all -- wait
+                    // that out before attempting the handshake below, or the
+                    // VERSION? request just gets missed while it's still booting.
                     Thread.Sleep(2000);
+                    PerformVersionHandshake(port);
                     StartReadLoop();
                     return true;
                 }
@@ -92,6 +109,56 @@ public partial class SerialManager : ISerialManager, IDisposable
         }
 
         return false;
+    }
+
+    // Caller must hold _lock and have just opened `port`. Best-effort: any
+    // failure here just means we don't get a version log line, it never
+    // blocks the connection.
+    private void PerformVersionHandshake(SerialPort port)
+    {
+        var originalTimeout = port.ReadTimeout;
+        try
+        {
+            port.DiscardInBuffer();
+            port.ReadTimeout = 1500;
+
+            var bytes = System.Text.Encoding.ASCII.GetBytes("VERSION?\n");
+            port.Write(bytes, 0, bytes.Length);
+
+            var line = port.ReadLine();
+            var parts = line.Split("||");
+            if (parts.Length == 3 && parts[0] == "PONG" && int.TryParse(parts[1], out var protocolVersion))
+            {
+                var firmwareVersion = parts[2];
+                if (protocolVersion == ExpectedProtocolVersion)
+                {
+                    _logger.LogInformation(
+                        "Firmware handshake OK: protocol {Protocol}, firmware {Firmware}", protocolVersion, firmwareVersion);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Firmware protocol version mismatch: companion expects {Expected}, board reports {Actual} (firmware {Firmware})",
+                        ExpectedProtocolVersion, protocolVersion, firmwareVersion);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Unrecognized firmware handshake response: {Line}", line);
+            }
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogInformation("No handshake response from firmware (older firmware without version support?)");
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Firmware handshake failed");
+        }
+        finally
+        {
+            port.ReadTimeout = originalTimeout;
+        }
     }
 
     private string? FindArduinoPort()
