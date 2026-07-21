@@ -159,8 +159,14 @@ public partial class SerialManager : ISerialManager, IDisposable
                 {
                     // No data within ReadTimeout — expected, keep polling.
                 }
-                catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+                catch (Exception ex)
                 {
+                    // Catch everything, not just the expected IO/UnauthorizedAccess
+                    // types -- a concurrent Send() failure can Close() this exact
+                    // port out from under a blocked ReadLine() call on another
+                    // thread, which throws ObjectDisposedException. Any exception
+                    // escaping this background thread crashes the whole process,
+                    // so nothing here can be allowed to go uncaught.
                     _logger.LogWarning(ex, "Serial read failed, closing port so reconnect can open a fresh handle");
                     lock (_lock)
                     {
