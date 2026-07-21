@@ -2,7 +2,7 @@
 ## Matrice Pad Tempo
 
 **Version:** 1.1
-**Status:** Concept — idea capture, not yet a committed design
+**Status:** Concept — idea capture, not yet a committed design. Superseded for its versioning/bootloader-entry/UX-flow/failure-handling content (§§3–7) by `docs/spec-firmwareUpdater.md`, now a committed design; this doc's §9 open questions on OTA/remote packages remain open.
 
 ---
 
