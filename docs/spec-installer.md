@@ -158,6 +158,8 @@ This deviates from an earlier draft of this spec, which specified `msiexec`-styl
 
 Written via `WriteRegStr`/`WriteRegDWORD` under `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\MatricePadApp` (`NoModify`/`NoRepair` set to 1 — no Modify/Repair option, only Uninstall).
 
+**Registry redirection note:** `makensis` builds a 32-bit executable, so Windows transparently redirects its `HKLM\Software\...` writes to `HKLM\Software\WOW6432Node\...` (same for `HKLM\Software\MatricePadApp`, §6's `InstallPath` key). This is normal WOW64 behavior, not a bug — Windows' own Programs and Features UI already knows to read both the native and `WOW6432Node` uninstall hives, which is exactly why that redirection convention exists. Worth remembering when spot-checking these keys directly (e.g. via `reg query` from a 64-bit shell) rather than through Programs and Features itself — querying the non-redirected path will look like the entry is missing when it isn't.
+
 ---
 
 ## 12. Branding
