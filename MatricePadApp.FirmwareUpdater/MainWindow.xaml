@@ -1,7 +1,7 @@
 <Window x:Class="MatricePadApp.FirmwareUpdater.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MatricePad Firmware Updater" Height="420" Width="520"
+        Title="Matrice Pad Tempo Firmware Updater" Height="420" Width="520"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="12">
         <Grid.RowDefinitions>

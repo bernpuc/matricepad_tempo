@@ -104,7 +104,7 @@ Section "Install"
   ; Updater is something the user needs to actively find and launch. See
   ; docs/spec-firmwareUpdater.md §8.
   CreateDirectory "${START_MENU_DIR}"
-  CreateShortcut "${START_MENU_DIR}\Check Firmware Version.lnk" "$INSTDIR\${UPDATER_DIR_NAME}\${UPDATER_EXE_NAME}"
+  CreateShortcut "${START_MENU_DIR}\Matrice Pad Tempo Firmware Updater.lnk" "$INSTDIR\${UPDATER_DIR_NAME}\${UPDATER_EXE_NAME}"
 
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${TASK_NAME}" "UninstallString" "$INSTDIR\Uninstall.exe"

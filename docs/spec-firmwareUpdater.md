@@ -108,7 +108,7 @@ File /r "${UPDATER_PUBLISH_DIR}\*.*"
 SetOutPath "$INSTDIR"
 
 CreateDirectory "$SMPROGRAMS\Matrice Pad Tempo Companion"
-CreateShortcut "$SMPROGRAMS\Matrice Pad Tempo Companion\Check Firmware Version.lnk" "$INSTDIR\FirmwareUpdater\MatricePadApp.FirmwareUpdater.exe"
+CreateShortcut "$SMPROGRAMS\Matrice Pad Tempo Companion\Matrice Pad Tempo Firmware Updater.lnk" "$INSTDIR\FirmwareUpdater\MatricePadApp.FirmwareUpdater.exe"
 ```
 
 The Updater's own publish output is produced by `build-installer.ps1`, which now also runs `MatricePadApp.FirmwareUpdater/stage-firmware.ps1` (§3) before publishing it self-contained, mirroring exactly how `MatricePadApp` itself is published.

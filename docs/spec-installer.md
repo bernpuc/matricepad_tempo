@@ -50,7 +50,7 @@ Windows 10 version 1903 or later is still implicitly required (WinRT `GlobalSyst
 | `app.ico` | Embedded in `MatricePadApp.exe` and in the installer/uninstaller exe (not a separate installed file) |
 | `README.md` | `C:\Program Files\MatricePad\` — end-user doc, see §4.1 |
 | `MatricePadApp.FirmwareUpdater.exe` + its own runtime dependencies (separate self-contained publish output) | `C:\Program Files\MatricePad\FirmwareUpdater\` — kept in its own subfolder rather than alongside `MatricePadApp.exe`'s files, since both are independently-published .NET apps and shouldn't have their dependency DLLs mixed |
-| Start Menu shortcut ("Check Firmware Version") | `$SMPROGRAMS\Matrice Pad Tempo Companion\` — launches the Firmware Updater above; see `docs/spec-firmwareUpdater.md` §8 |
+| Start Menu shortcut ("Matrice Pad Tempo Firmware Updater") | `$SMPROGRAMS\Matrice Pad Tempo Companion\` — launches the Firmware Updater above; see `docs/spec-firmwareUpdater.md` §8 |
 | Uninstall entry | Windows Add or Remove Programs |
 
 No desktop shortcut. `MatricePadApp.exe` itself still has no Start Menu entry of its own — it runs silently in the background, started by its scheduled task (§6) at logon. The one Start Menu entry that does exist launches the Firmware Updater, a separate manually-invoked tool (`docs/spec-firmwareUpdater.md`), not the companion service.

@@ -28,7 +28,7 @@ The app starts via a Windows scheduled task, not the Startup folder:
 
 ## Checking/updating the Panel's firmware
 
-A separate tool handles this — look for **"Check Firmware Version"** in your Start Menu, under **Matrice Pad Tempo Companion**. Unlike the companion app above, it opens a normal window: click **Check Firmware Version** to see whether your Panel's firmware is current, and if an update is available, click **Update Firmware Now** to flash it. It temporarily pauses the companion app while it's running and restarts it automatically when done — nothing is flashed without you explicitly confirming it first.
+A separate tool handles this — look for **"Matrice Pad Tempo Firmware Updater"** in your Start Menu, under **Matrice Pad Tempo Companion**. Unlike the companion app above, it opens a normal window: click **Check Firmware Version** to see whether your Panel's firmware is current, and if an update is available, click **Update Firmware Now** to flash it. It temporarily pauses the companion app while it's running and restarts it automatically when done — nothing is flashed without you explicitly confirming it first.
 
 ## Removing it completely
 

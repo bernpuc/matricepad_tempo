@@ -14,7 +14,7 @@ This project combines:
 *   **Arduino Firmware:** Drives a 128×32 OLED (now-playing text or a 16-bar frequency graph), reads a rotary encoder and 2×2 keypad, and sends HID volume/media-key events straight to Windows. Also responds to a `VERSION?` handshake so the Windows host can detect a firmware/companion version mismatch.
 *   **Windows Host — `MatricePadApp/` (.NET 10, active):** Polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and streams it all to the board. Installed via an NSIS installer that registers a Task Scheduler "at logon" task — see `MatricePadApp/build-installer.ps1`.
 *   **`MatricePad.SerialCore/`:** Shared library holding board discovery (VID:PID), the DTR/RTS-aware serial connection pattern, and the version handshake — used by both `MatricePadApp/` and the Firmware Updater below, so this logic exists in exactly one place.
-*   **`MatricePadApp.FirmwareUpdater/`:** A separate tool (Start Menu shortcut after install: "Check Firmware Version") that checks the connected board's firmware version and can flash the bundled firmware if it's out of date, with explicit confirmation at every step.
+*   **`MatricePadApp.FirmwareUpdater/`:** A separate tool (Start Menu shortcut after install: "Matrice Pad Tempo Firmware Updater") that checks the connected board's firmware version and can flash the bundled firmware if it's out of date, with explicit confirmation at every step.
 *   **Windows Host — `template.py` (Python, legacy):** The original implementation. Kept in the repo for reference; no longer runs at startup, superseded by `MatricePadApp/` above.
 
 See `docs/PRD.md` and the other `docs/spec-*.md` files for the full design, and `CLAUDE.md` for repo-specific developer notes.
