@@ -2,7 +2,7 @@
 ## Matrice Pad Tempo
 
 **Version:** 1.4
-**Status:** Draft
+**Status:** Implemented — all components (Panel firmware, Windows App, Installer, Firmware Updater) are shipped and verified against real hardware; see the per-component specs in this folder.
 
 ---
 
@@ -215,4 +215,4 @@ Sent on every content change, or as a keepalive every 2.5 seconds to prevent the
 - Multi-device support (more than one Panel connected simultaneously)
 - macOS or Linux host support
 - Wireless connectivity
-- Firmware update mechanism over USB
+- OTA / remote firmware package fetching (see `docs/spec-firmwareUpdater.md` §10) — the shipped Firmware Updater flashes a locally-bundled `.hex` only

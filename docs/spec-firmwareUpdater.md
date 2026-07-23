@@ -2,7 +2,7 @@
 ## Matrice Pad Tempo
 
 **Version:** 1.2
-**Status:** Implemented and verified live against real hardware — version check flow (§5), flash flow (§6), and the Start Menu shortcut (§8) are all shipped and installer-tested end to end. Supersedes the version-check/UX-flow portions of `docs/spec-flasher.md` (still "Concept" status); the OTA/remote-package question in that doc's §9 remains open and out of scope here too. §7's Finish-page integration remains deliberately deferred, per that section's own reasoning.
+**Status:** Implemented and verified live against real hardware — version check flow (§5), flash flow (§6), and the Start Menu shortcut (§8) are all shipped and installer-tested end to end. §7's Finish-page integration remains deliberately deferred, per that section's own reasoning; §10 lists remaining open questions.
 
 ---
 
@@ -43,9 +43,9 @@ Both `MatricePadApp.FirmwareUpdater.csproj` and `MatricePadApp.csproj` reference
 
 `MainWindow.xaml.cs`'s `ExpectedProtocolVersion`/`ExpectedFirmwareVersion`/`BundledHexFileName` constants must be kept in sync with the `.ino`'s `PROTOCOL_VERSION`/`FIRMWARE_VERSION` by hand for now -- `stage-firmware.ps1` prints a reminder if they might have drifted. Reading these from a manifest instead is still a TODO, not yet worth it with only one firmware build to track.
 
-**Not implemented:** a SHA-256 checksum check on the bundled `.hex` before flashing (`spec-flasher.md` §5's suggestion). Skipped for now because the `.hex` is compiled locally and staged immediately before use, with no download/OTA step in between to protect against -- there's no untrusted transfer for a checksum to catch yet. Revisit if/when an OTA distribution path (still out of scope, §10) is ever added.
+**Not implemented:** a SHA-256 checksum check on the bundled `.hex` before flashing. Skipped for now because the `.hex` is compiled locally and staged immediately before use, with no download/OTA step in between to protect against -- there's no untrusted transfer for a checksum to catch yet. Revisit if/when an OTA distribution path (still out of scope, §10) is ever added.
 
-**`avrdude.exe` + `avrdude.conf` bundled** (via the staging script above), shelled out to with the same arguments `arduino-cli`'s own `platform.txt` recipe generates for a Leonardo (`-patmega32u4 -cavr109 -b57600 -D`, confirmed by reading `platform.txt`/`boards.txt` directly rather than guessing) — this deviates from `spec-flasher.md` §2's recommendation (native C# avr109 client, for a single-signed-binary distribution story). Reasoning for the change:
+**`avrdude.exe` + `avrdude.conf` bundled** (via the staging script above), shelled out to with the same arguments `arduino-cli`'s own `platform.txt` recipe generates for a Leonardo (`-patmega32u4 -cavr109 -b57600 -D`, confirmed by reading `platform.txt`/`boards.txt` directly rather than guessing) — an earlier idea of a native C# avr109 client (for a single-signed-binary distribution story) was dropped in favor of this. Reasoning for the change:
 - We already have a proven, working avrdude invocation in this repo, exercised live multiple times — implementing avr109 from scratch is real protocol work (page writes, per-page verify, chip-specific quirks avrdude's config already handles) that isn't worth the risk for a personal-scale tool.
 - Code signing isn't done for *any* binary in this project yet (`spec-installer.md` §13 — "not yet done"). Bundling one more unsigned binary doesn't change the current security posture; revisit this choice together if/when signing is finally set up.
 
@@ -53,10 +53,10 @@ Both `MatricePadApp.FirmwareUpdater.csproj` and `MatricePadApp.csproj` reference
 
 ## 4. Bootloader Entry
 
-Two-step approach, per `spec-flasher.md` §3, refined by testing live against the real board:
+Two-step approach, refined by testing live against the real board:
 
 1. **Automatic 1200bps touch:** open then close the port at 1200 baud, then **discover the bootloader's own port by VID:PID rather than waiting for the same COM port name to reappear.** The bootloader is a distinct USB device from the running sketch, with its own enumeration — assuming the same port name reappears was tried first and failed outright (avrdude connected to the wrong, stale port). Worse, the VID:PID to search for isn't the obvious one either: this board's bootloader identifies as a **SparkFun Pro Micro bootloader (`1B4F:9205`)**, not an **Arduino Leonardo bootloader (`2341:0036`)** — the sketch is compiled with the `arduino:avr:leonardo` FQBN (same chip/protocol) so the *application*-mode board enumerates as "Arduino Leonardo" (`2341:8036`), but the bootloader itself keeps SparkFun's own identity regardless of which FQBN compiled what's currently flashed. The implementation checks both VID:PIDs so it also works against an actual Arduino-brand Leonardo. See `CLAUDE.md`'s "Serial Port Gotchas" for the general version of this note.
-2. **Manual fallback:** if no bootloader-identity port appears within ~20s (matching `arduino/build.ps1`'s own discovery timeout), log: *"Double-tap the reset button on the board now, then click 'Update Firmware Now' again."* As implemented this is a log message plus a re-clickable button, not a live countdown UI — simpler than originally envisioned, sufficient in practice. The automatic touch was confirmed unreliable on this hardware during live testing, exactly as `spec-flasher.md` §3 already anticipated from earlier development experience — budget for the manual-button-press path being the common case, not a rare fallback.
+2. **Manual fallback:** if no bootloader-identity port appears within ~20s (matching `arduino/build.ps1`'s own discovery timeout), log: *"Double-tap the reset button on the board now, then click 'Update Firmware Now' again."* As implemented this is a log message plus a re-clickable button, not a live countdown UI — simpler than originally envisioned, sufficient in practice. The automatic touch was confirmed unreliable on this hardware during live testing, as anticipated from earlier development experience — budget for the manual-button-press path being the common case, not a rare fallback.
 
 **Control-flow note, found only by testing the retry path live:** the companion must stay stopped, and the "Update Firmware Now" button must stay clickable, across a manual-retry cycle — an earlier version of this flow restarted the companion and hid the button as soon as the automatic touch failed, which re-locked the port and disabled the retry path at exactly the moment the user needed both to still be available.
 
@@ -84,7 +84,7 @@ Two-step approach, per `spec-flasher.md` §3, refined by testing live against th
 5. avrdude resets the board out of the bootloader automatically at the end of a normal invocation.
 6. Re-discover the application-mode port by VID:PID (not the pre-flash port name, for the same reason as §4) and re-run the version check (§5) to confirm the new version is now reported.
 7. `schtasks /Run /TN MatricePadApp` — restart the companion, but only once the flow has actually finished (terminal success or terminal failure) rather than while a manual-reset retry is still pending (§4's control-flow note).
-8. Report success/failure clearly. On failure: *"Update failed, but your board is safe — the bootloader is protected and can't be damaged by this. Just try again."* (`spec-flasher.md` §7 — a normal avr109 application flash never touches the Caterina bootloader's protected boot section, so a failed/interrupted flash just leaves the application section to retry, not a bricked board.)
+8. Report success/failure clearly. On failure: *"Update failed, but your board is safe — the bootloader is protected and can't be damaged by this. Just try again."* (A normal avr109 application flash never touches the Caterina bootloader's protected boot section, so a failed/interrupted flash just leaves the application section to retry, not a bricked board.)
 
 ---
 
@@ -130,7 +130,7 @@ Verified end to end: a real silent install (`/S`) correctly staged both apps, cr
 
 ## 10. Open Questions / Out of Scope
 
-- OTA / remote update-package fetching — still out of scope, unchanged from `spec-flasher.md` §9.
-- Whether the Updater ever gets folded into `MatricePadApp` itself as a tray-icon action — `spec-flasher.md`'s open question on this is now resolved *for this spec's scope*: separate app, definitively. Could still be revisited later if the companion ever grows a tray icon for other reasons.
+- OTA / remote update-package fetching — still out of scope.
+- Whether the Updater ever gets folded into `MatricePadApp` itself as a tray-icon action — resolved for this spec's scope: separate app, definitively. Could still be revisited later if the companion ever grows a tray icon for other reasons.
 - Code signing of `avrdude.exe` / the Updater exe — deferred until the installer's own signing story (`spec-installer.md` §13) is resolved; bundling one more unsigned binary doesn't change today's posture.
 - Revisiting §7 (installer Finish-page integration) if the Start Menu shortcut proves too easy to miss.
