@@ -1,4 +1,4 @@
-# PowerShell script to build the Matrice Pad Sound Panel installer.
+# PowerShell script to build the Matrice Pad Tempo Companion installer.
 # This script reads the version from the .csproj, publishes MatricePadApp
 # self-contained (so the installer has no .NET runtime prerequisite to
 # check), and builds the NSIS installer. Modeled on
@@ -8,7 +8,7 @@ param(
     [string]$Configuration = "Release"
 )
 
-Write-Host "Building Matrice Pad Sound Panel Installer..." -ForegroundColor Cyan
+Write-Host "Building Matrice Pad Tempo Companion Installer..." -ForegroundColor Cyan
 
 $projectDir = $PSScriptRoot
 $repoRoot = Split-Path -Parent $projectDir

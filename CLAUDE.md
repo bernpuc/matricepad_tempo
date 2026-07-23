@@ -11,7 +11,7 @@ MatricePad Tempo is a two-component embedded system:
 
   This started as a Python prototype (`template.py` / `tempo_core/`) before being ported to .NET; the prototype is preserved at the `legacy-python-era` tag if you need to compare behavior, but is no longer part of the working tree.
 - **`MatricePad.SerialCore/`** — a small shared .NET class library holding logic that must not drift between `MatricePadApp` and `MatricePadApp.FirmwareUpdater` (below): VID:PID board discovery, the DTR/RTS-aware `SerialPort` open pattern, and the `VERSION?`/`PONG` handshake. See its "Serial Port Gotchas" note below before touching either consumer's connection code.
-- **`MatricePadApp.FirmwareUpdater/`** (.NET 10, WPF) — a separate, manually-launched tool that checks the connected board's firmware version and can flash the bundled firmware if it's out of date. Design doc: `docs/spec-firmwareUpdater.md`. Not installed/wired into the NSIS installer yet (deferred, see that doc §7) — run via `dotnet run` from the project folder for now.
+- **`MatricePadApp.FirmwareUpdater/`** (.NET 10, WPF) — a separate, manually-launched tool that checks the connected board's firmware version and can flash the bundled firmware if it's out of date. Bundled by the NSIS installer into its own `$INSTDIR\FirmwareUpdater\` subfolder with a Start Menu shortcut ("Matrice Pad Tempo Firmware Updater") — only a Finish-page "run after install" checkbox was deliberately deferred (see `docs/spec-firmwareUpdater.md` §7). Design doc: `docs/spec-firmwareUpdater.md`.
 
 ## Code Organization
 
@@ -59,7 +59,7 @@ cd MatricePadApp
 dotnet run                     # run directly, no install
 
 .\build-installer.ps1          # publish self-contained + build the NSIS installer
-# then run Package\Matrice Pad Sound Panel <version> Installer.exe (prompts UAC) --
+# then run Package\Matrice Pad Tempo Companion <version> Installer.exe (prompts UAC) --
 # installs to C:\Program Files\MatricePad\, registers the MatricePadApp Task
 # Scheduler task (at logon, current user), and launches immediately
 ```

@@ -66,7 +66,7 @@ git clone https://github.com/bernpuc/matricepad_tempo.git
 ```powershell
 cd MatricePadApp
 .\build-installer.ps1
-# then run Package\Matrice Pad Sound Panel <version> Installer.exe (prompts UAC)
+# then run Package\Matrice Pad Tempo Companion <version> Installer.exe (prompts UAC)
 ```
 
 This installs to `C:\Program Files\MatricePad\`, registers a Task Scheduler "at logon" task, and launches immediately. It also installs the Firmware Updater (below) and its own Start Menu shortcut. To run the companion without installing:
