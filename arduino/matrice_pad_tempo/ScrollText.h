@@ -4,7 +4,6 @@
 // Marquee scroll engine shared by every display mode: a line pauses at each
 // end for SCROLL_PAUSE_MS, then steps one pixel every SCROLL_STEP_MS until it
 // reaches the far end, where it pauses again and reverses.
-namespace TempoCore {
 
 struct LineScroll {
     int           pixel;
@@ -19,5 +18,3 @@ void resetScroll(LineScroll &s);
 // window. No-ops (returns false) when the content already fits on screen.
 bool tickScroll(LineScroll &s, int contentPx, int screenWidth,
                  unsigned long pauseMs, unsigned long stepMs);
-
-}

@@ -1,8 +1,6 @@
 <#
 .SYNOPSIS
-    Compile (and optionally upload) a MatricePad Tempo sketch with arduino-cli,
-    resolving the shared TempoCore library from this repo instead of the
-    sketchbook libraries folder.
+    Compile (and optionally upload) the MatricePad Tempo sketch with arduino-cli.
 
 .PARAMETER Sketch
     Path to the sketch folder, e.g. arduino/matrice_pad_tempo
@@ -37,9 +35,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repoRoot     = Split-Path -Parent $PSScriptRoot
-$librariesDir = Join-Path $PSScriptRoot "libraries"
-$sketchPath   = Join-Path $repoRoot $Sketch
+$repoRoot   = Split-Path -Parent $PSScriptRoot
+$sketchPath = Join-Path $repoRoot $Sketch
 
 if (-not (Test-Path $sketchPath)) {
     Write-Error "Sketch folder not found: $sketchPath"
@@ -47,14 +44,11 @@ if (-not (Test-Path $sketchPath)) {
 }
 
 if ($Port) {
-    # arduino-cli upload doesn't recompile (and doesn't accept --libraries), so
-    # compile+upload has to happen in one `compile --upload` call to resolve
-    # TempoCore from this repo instead of the sketchbook libraries folder.
     Write-Host "Compiling and uploading $Sketch ($Fqbn) to $Port (discovery timeout $DiscoveryTimeout) ..."
-    arduino-cli compile --fqbn $Fqbn --libraries $librariesDir --upload --port $Port --discovery-timeout $DiscoveryTimeout $sketchPath
+    arduino-cli compile --fqbn $Fqbn --upload --port $Port --discovery-timeout $DiscoveryTimeout $sketchPath
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
-    Write-Host "Compiling $Sketch ($Fqbn) with libraries from $librariesDir ..."
-    arduino-cli compile --fqbn $Fqbn --libraries $librariesDir $sketchPath
+    Write-Host "Compiling $Sketch ($Fqbn) ..."
+    arduino-cli compile --fqbn $Fqbn $sketchPath
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

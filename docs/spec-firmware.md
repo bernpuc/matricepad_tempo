@@ -38,18 +38,18 @@ The firmware has no connectivity dependency — all HID controls function regard
 | HID-Project (NicoHood) | HID consumer control interface |
 | Keypad (Mark Stanley) | 2×2 matrix key scanning |
 
-### 3.1 Shared Code (`TempoCore`)
+### 3.1 Sketch Layout
 
-The marquee scroll engine, status-icon/overlay drawing, and `\|\|`-delimited serial field parsing live in an in-repo Arduino library, `arduino/libraries/TempoCore` (not the sketchbook), so future feature sketches can reuse them without duplication:
+`arduino/matrice_pad_tempo/` is a single, self-contained sketch — no external library. The marquee scroll engine, status-icon/overlay drawing, and `\|\|`-delimited serial field parsing live alongside `matrice_pad_tempo.ino` as plain tab files, compiled together automatically by `arduino-cli`/the Arduino IDE:
 
-| Header | Contents |
+| File | Contents |
 |---|---|
-| `ScrollText.h` | `LineScroll` struct, `resetScroll()`, `tickScroll()` |
-| `StatusIcons.h` | `drawCircleIcon()`, `applyMuteContrast()`, `showOverlayBanner()` |
-| `SerialFraming.h` | `findSep()`, `trimInPlace()`, `copyField()`, `splitTitleIntoLines()` |
-| `RotaryEncoder.h` | `EncoderState` struct, `initEncoderState()`, `tickEncoder()` (debounced quadrature rotation) |
+| `ScrollText.h/.cpp` | `LineScroll` struct, `resetScroll()`, `tickScroll()` |
+| `StatusIcons.h/.cpp` | `drawCircleIcon()`, `applyMuteContrast()`, `showOverlayBanner()` |
+| `SerialFraming.h/.cpp` | `findSep()`, `trimInPlace()`, `copyField()`, `splitTitleIntoLines()` |
+| `RotaryEncoder.h/.cpp` | `EncoderState` struct, `initEncoderState()`, `tickEncoder()` (debounced quadrature rotation) |
 
-Building/uploading requires resolving this library path explicitly — via `arduino/build.ps1` (wraps `arduino-cli` with `--libraries arduino/libraries`), or by linking `TempoCore` into the Arduino IDE's sketchbook `libraries/` folder. See the README for both paths.
+Build/upload via `arduino/build.ps1` (a thin `arduino-cli` wrapper) — see the README.
 
 ---
 
@@ -88,7 +88,7 @@ Building/uploading requires resolving this library path explicitly — via `ardu
 | `overlayStart` | `unsigned long` | Timestamp the active overlay was raised |
 | `overlayDurationMs` | `unsigned long` | How long the active overlay stays up before reverting |
 | `inputBuffer` | `char[MAX_SERIAL_BUFFER]` | Accumulates serial characters until `\n` |
-| `encoderState` | `TempoCore::EncoderState` | `{ lastClkState, lastDebounceTime }` -- rotation edge detection, owned by `TempoCore::tickEncoder()` |
+| `encoderState` | `EncoderState` | `{ lastClkState, lastDebounceTime }` -- rotation edge detection, owned by `tickEncoder()` |
 | `lastButtonState` | `int` | Debounced encoder button state |
 | `lastRawButton` | `int` | Raw encoder button state for debounce logic |
 | `lastDebounceTime` | `unsigned long` | Last encoder button edge timestamp |
@@ -184,7 +184,7 @@ System-volume-only -- there is no app-volume mode or serial round-trip for encod
 
 ## 10. Encoder Handling
 
-Edge detection on CLK pin (falling edge = HIGH→LOW transition), via `TempoCore::tickEncoder()`.
+Edge detection on CLK pin (falling edge = HIGH→LOW transition), via `tickEncoder()`.
 
 On falling edge (with debounce `ENCODER_DEBOUNCE_MS`):
 - Read DT pin; determine direction (`clockwise = DT == CLK`)

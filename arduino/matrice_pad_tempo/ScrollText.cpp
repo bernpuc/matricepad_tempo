@@ -1,7 +1,5 @@
 #include "ScrollText.h"
 
-namespace TempoCore {
-
 void resetScroll(LineScroll &s) {
     s.pixel    = 0;
     s.dir      = 0;
@@ -29,6 +27,4 @@ bool tickScroll(LineScroll &s, int contentPx, int screenWidth,
         }
     }
     return false;
-}
-
 }

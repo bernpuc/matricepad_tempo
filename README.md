@@ -40,9 +40,9 @@ These instructions will get you a copy of the project up and running on your loc
 
 ### Building/Uploading the Firmware
 
-The sketch depends on `arduino/libraries/TempoCore` (shared scroll/icon/serial-parsing code, in-repo — see `CLAUDE.md`). Two ways to build:
+`arduino/matrice_pad_tempo/` is a single self-contained sketch — no library setup needed. Two ways to build:
 
-**Via `arduino-cli`** (no IDE library setup needed):
+**Via `arduino-cli`:**
 ```powershell
 arduino-cli core install arduino:avr
 arduino-cli lib install "Keypad" "HID-Project" "Adafruit GFX Library" "Adafruit SSD1306"
@@ -51,11 +51,7 @@ arduino-cli lib install "Keypad" "HID-Project" "Adafruit GFX Library" "Adafruit 
 ```
 If double-tapping the Pro Micro's reset pin to reach the bootloader (see upload tip below), `build.ps1` waits up to 20s (`-DiscoveryTimeout`) for the bootloader port to reappear instead of arduino-cli's default 1s, which is too tight to hit manually.
 
-**Via the Arduino IDE:** the IDE only auto-discovers libraries from its sketchbook folder, not this repo, so link `TempoCore` into the sketchbook once:
-```powershell
-New-Item -ItemType Junction -Path "<your sketchbook>\libraries\TempoCore" -Target "<repo path>\arduino\libraries\TempoCore"
-```
-(Find your sketchbook path via File → Preferences → "Sketchbook location" in the IDE.) After that, open `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` directly and Upload as normal.
+**Via the Arduino IDE:** open `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` directly (the IDE loads the sketch's other `.h`/`.cpp` files as tabs automatically) and Upload as normal.
 
 ### Running the Windows Host
 

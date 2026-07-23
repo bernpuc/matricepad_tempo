@@ -1,7 +1,5 @@
 #include "StatusIcons.h"
 
-namespace TempoCore {
-
 void drawCircleIcon(Adafruit_SSD1306 &display, bool isMute) {
     display.fillCircle(64, 16, 15, SSD1306_WHITE);
     // Thin black ring inset from the outer edge, breaking up the flat white
@@ -35,6 +33,4 @@ void showOverlayBanner(Adafruit_SSD1306 &display, int textSize, int x, int y, co
     display.setCursor(x, y);
     display.println(text);
     display.display();
-}
-
 }

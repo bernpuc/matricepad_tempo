@@ -1,11 +1,9 @@
 #pragma once
 #include <Arduino.h>
 
-// Debounced quadrature-encoder rotation detection, shared by any sketch that
-// reads the same CLK/DT rotary encoder. Button-press handling (the encoder's
-// own pushbutton) is sketch-specific and not covered here -- see the baseline
-// sketch's handleModeButton() for that pattern.
-namespace TempoCore {
+// Debounced quadrature-encoder rotation detection. Button-press handling (the
+// encoder's own pushbutton) is separate -- see handleDisplayModeButton() in
+// the main sketch.
 
 struct EncoderState {
     int           lastClkState;
@@ -19,5 +17,3 @@ void initEncoderState(EncoderState &s, int clkPin);
 // CLK falling edge, after debounceMs has elapsed since the last one), with
 // clockwiseOut set to the turn direction.
 bool tickEncoder(EncoderState &s, int clkPin, int dtPin, unsigned long debounceMs, bool &clockwiseOut);
-
-}

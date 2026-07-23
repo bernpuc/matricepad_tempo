@@ -3,13 +3,14 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <TempoCore.h>
+#include "ScrollText.h"
+#include "StatusIcons.h"
+#include "SerialFraming.h"
+#include "RotaryEncoder.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
-
-using namespace TempoCore;
 
 // ── Display layout switch ─────────────────────────────────────────────────────
 // Set to 2 or 3 to select the display layout.
@@ -52,7 +53,6 @@ using namespace TempoCore;
 
 // ── Bar layout (BARS view) ────────────────────────────────────────────────────
 // 16 bars * 8px slot (6px bar + 2px gap) = 128px, exactly fills the screen width.
-// Same constants as the standalone spectrum sketch.
 #define NUM_BARS    16
 #define BAR_WIDTH    6
 #define BAR_GAP      2
@@ -149,7 +149,7 @@ const int debounceDelay = 50;
 
 // ── Drawing ───────────────────────────────────────────────────────────────────
 void applyMuteContrast() {
-    TempoCore::applyMuteContrast(display, isMuted);
+    applyMuteContrast(display, isMuted);
 }
 
 void drawMediaDisplay() {
@@ -173,16 +173,16 @@ void drawMediaDisplay() {
 #endif
 
     if (isMuted) {
-        TempoCore::drawCircleIcon(display, true);
+        drawCircleIcon(display, true);
     } else if (isPaused) {
-        TempoCore::drawCircleIcon(display, false);
+        drawCircleIcon(display, false);
     }
     display.display();
 }
 
 // Draws the 16-bar frequency graph plus an elapsed/duration readout in the
 // upper-right corner (skipped when durationSec is 0 -- no WinRT timeline
-// available). Same layout as the standalone spectrum sketch.
+// available).
 void drawBars() {
     display.clearDisplay();
     for (int i = 0; i < NUM_BARS; i++) {
@@ -206,9 +206,9 @@ void drawBars() {
     }
 
     if (isMuted) {
-        TempoCore::drawCircleIcon(display, true);
+        drawCircleIcon(display, true);
     } else if (isPaused) {
-        TempoCore::drawCircleIcon(display, false);
+        drawCircleIcon(display, false);
     }
     display.display();
 }
@@ -229,7 +229,7 @@ void drawCurrentView() {
 // that time has elapsed. Used for the volume readout, mute/unmute banner, and
 // SYS/APP mode banner — the one place their shared draw+timer boilerplate lives.
 void showOverlay(OverlayKind kind, unsigned long durationMs, int textSize, int x, int y, const char *text) {
-    TempoCore::showOverlayBanner(display, textSize, x, y, text);
+    showOverlayBanner(display, textSize, x, y, text);
 
     activeOverlay    = kind;
     overlayStart     = millis();

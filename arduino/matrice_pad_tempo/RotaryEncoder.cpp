@@ -1,7 +1,5 @@
 #include "RotaryEncoder.h"
 
-namespace TempoCore {
-
 void initEncoderState(EncoderState &s, int clkPin) {
     s.lastClkState     = digitalRead(clkPin);
     s.lastDebounceTime = 0;
@@ -20,6 +18,4 @@ bool tickEncoder(EncoderState &s, int clkPin, int dtPin, unsigned long debounceM
 
     s.lastClkState = currentStateCLK;
     return fired;
-}
-
 }

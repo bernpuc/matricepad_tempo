@@ -1,10 +1,7 @@
 #pragma once
 
 // Null-terminated, no-heap string helpers for parsing "||"-delimited serial
-// packets in place. Feature sketches define their own field layout (the
-// baseline uses song||artist||volume||muted||appVolume||paused) — these are
-// just the generic primitives, not tied to any one protocol.
-namespace TempoCore {
+// packets in place ("song||artist||volume||muted||paused||...").
 
 // Finds the next "||" separator in s, or nullptr if none remains.
 char* findSep(char *s);
@@ -20,5 +17,3 @@ void copyField(char *dst, int dstCapacity, const char *src, int len);
 // at the last space at or before maxLen chars. Used by the 3-line display
 // layout to fit long song titles across two static rows.
 void splitTitleIntoLines(const char *title, char *out1, char *out2, int outCapacity, int maxLen);
-
-}

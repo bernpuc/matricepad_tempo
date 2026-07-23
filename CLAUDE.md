@@ -15,11 +15,9 @@ MatricePad Tempo is a two-component embedded system:
 
 ## Code Organization
 
-Shared logic lives in `arduino/libraries/TempoCore/` so feature-specific sketch variants (e.g. a duration/elapsed-time display, a frequency bar graph) can be added without duplicating the boring 80%:
+`arduino/matrice_pad_tempo/` is a single, self-contained sketch — no separate library, no sibling sketch variants. `matrice_pad_tempo.ino` holds the main logic (display drawing, serial parsing, encoder/keypad handling); `ScrollText.h/.cpp` (marquee scroll engine), `StatusIcons.h/.cpp` (mute/pause circle glyph + overlay banner drawing), `SerialFraming.h/.cpp` (null-terminated `\|\|`-delimited field parsing), and `RotaryEncoder.h/.cpp` (debounced quadrature rotation detection) sit alongside it as plain tab files that `arduino-cli`/the Arduino IDE compile together automatically — the Arduino IDE shows each as its own tab.
 
-- **`arduino/libraries/TempoCore/`** — an in-repo Arduino library (not the sketchbook). Holds `ScrollText` (the marquee scroll engine), `StatusIcons` (mute/pause circle glyph + overlay banner drawing), `SerialFraming` (null-terminated `\|\|`-delimited field parsing), and `RotaryEncoder` (debounced quadrature rotation detection). `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` is the baseline sketch built on top of it; `arduino/matrice_pad_tempo_spectrum/` is a standalone bars-only sketch built the same way; future feature sketches go in sibling folders under `arduino/` and `#include <TempoCore.h>` the same way.
-
-Because `arduino-cli` doesn't resolve libraries outside the sketchbook by default, compile/upload through `arduino/build.ps1` (wraps `arduino-cli` with `--libraries arduino/libraries`) rather than a bare `arduino-cli compile`/`upload`:
+Compile/upload through `arduino/build.ps1` (a thin `arduino-cli` wrapper with sensible FQBN/discovery-timeout defaults) rather than a bare `arduino-cli compile`/`upload`:
 
 ```powershell
 ./arduino/build.ps1 -Sketch arduino/matrice_pad_tempo
@@ -36,9 +34,8 @@ Found the hard way while building the version handshake and firmware updater —
 
 ## Serial Protocol
 
-Messages are newline-terminated (`\n`), sent PC → Arduino only (the baseline sketch's encoder button no longer round-trips app-volume commands — see below), except for the version handshake below, which is the one request/response exchange on the baseline sketch.
+Messages are newline-terminated (`\n`), sent PC → Arduino only (the encoder button no longer round-trips app-volume commands — see below), except for the version handshake below, which is the one request/response exchange.
 
-**Baseline sketch** (`matrice_pad_tempo.ino`):
 ```
 song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSec
 ```
@@ -53,12 +50,7 @@ song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSe
 
 The encoder button toggles the Arduino between a **TEXT** view (song/artist, scrolling) and a **BARS** view (the 16-bar graph + elapsed/duration in the upper-right) — both are always kept up to date from the same packet regardless of which is on-screen.
 
-**Version handshake** (baseline sketch only): once per connection, right after opening the port, `MatricePadApp`'s `SerialManager` sends a bare `VERSION?` line and firmware responds `PONG||<protocolVersion>||<firmwareVersion>` (e.g. `PONG||1||1.1.0`). `protocolVersion` is the wire-format version (`PROTOCOL_VERSION` in the `.ino` / `ExpectedProtocolVersion` in `SerialManager.cs`) — bump both together whenever the baseline packet's field count/order changes; `firmwareVersion` is a human-readable sketch version, diagnostic only. A mismatch is logged as a warning but never blocks the connection; firmware that predates this feature just ignores the unrecognized `VERSION?` line (it has no `||`, so it falls through the existing parser harmlessly) and the companion logs that no handshake response arrived, then proceeds normally.
-
-**Spectrum sketch** (`matrice_pad_tempo_spectrum.ino`) — standalone, bars-only, simpler wire format with no song/artist/volume fields:
-```
-bar0,bar1,...,bar15,elapsedSec,durationSec
-```
+**Version handshake:** once per connection, right after opening the port, `MatricePadApp`'s `SerialManager` sends a bare `VERSION?` line and firmware responds `PONG||<protocolVersion>||<firmwareVersion>` (e.g. `PONG||1||1.1.0`). `protocolVersion` is the wire-format version (`PROTOCOL_VERSION` in the `.ino` / `ExpectedProtocolVersion` in `SerialManager.cs`) — bump both together whenever the packet's field count/order changes; `firmwareVersion` is a human-readable sketch version, diagnostic only. A mismatch is logged as a warning but never blocks the connection; firmware that predates this feature just ignores the unrecognized `VERSION?` line (it has no `||`, so it falls through the existing parser harmlessly) and the companion logs that no handshake response arrived, then proceeds normally.
 
 ## Running the Windows Host (`MatricePadApp/`, production)
 

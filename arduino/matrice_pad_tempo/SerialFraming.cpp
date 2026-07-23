@@ -2,8 +2,6 @@
 #include <string.h>
 #include <ctype.h>
 
-namespace TempoCore {
-
 char* findSep(char *s) {
     return strstr(s, "||");
 }
@@ -53,6 +51,4 @@ void splitTitleIntoLines(const char *title, char *out1, char *out2, int outCapac
             copyField(out2, outCapacity, rest, restLen);
         }
     }
-}
-
 }
