@@ -15,7 +15,6 @@ This project combines:
 *   **Windows Host — `MatricePadApp/` (.NET 10, active):** Polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and streams it all to the board. Installed via an NSIS installer that registers a Task Scheduler "at logon" task — see `MatricePadApp/build-installer.ps1`.
 *   **`MatricePad.SerialCore/`:** Shared library holding board discovery (VID:PID), the DTR/RTS-aware serial connection pattern, and the version handshake — used by both `MatricePadApp/` and the Firmware Updater below, so this logic exists in exactly one place.
 *   **`MatricePadApp.FirmwareUpdater/`:** A separate tool (Start Menu shortcut after install: "Matrice Pad Tempo Firmware Updater") that checks the connected board's firmware version and can flash the bundled firmware if it's out of date, with explicit confirmation at every step.
-*   **Windows Host — `template.py` (Python, legacy):** The original implementation. Kept in the repo for reference; no longer runs at startup, superseded by `MatricePadApp/` above.
 
 See `docs/PRD.md` and the other `docs/spec-*.md` files for the full design, and `CLAUDE.md` for repo-specific developer notes.
 
@@ -38,7 +37,6 @@ These instructions will get you a copy of the project up and running on your loc
 *   Arduino libraries: `Keypad`, `HID-Project` (NicoHood), `Adafruit GFX`, `Adafruit SSD1306`
 *   .NET 10 SDK (Windows host, `MatricePadApp/`)
 *   NSIS (only needed to build the installer — `MatricePadApp/build-installer.ps1`)
-*   *(Legacy Python host only, not required for normal use)* Python 3.10 (the `winrt` wheels are built for cp310) with `pyserial`, `pycaw`, `comtypes`, `pywin32`, `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Media.Control`, `numpy`, `soundcard`
 
 ### Building/Uploading the Firmware
 
@@ -91,10 +89,3 @@ dotnet run
 ```
 
 Stops the running companion (needs exclusive access to the board's serial port), checks the connected board's firmware version, and offers to flash the bundled firmware if it's out of date — always with explicit confirmation. See `docs/spec-firmwareUpdater.md`.
-
-**4. Legacy (Python) — for reference/comparison only, not required for normal use:**
-
-```powershell
-.\.venv310\Scripts\Activate.ps1
-python template.py --port COMx --debug   # --port and --debug are optional
-```

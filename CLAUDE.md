@@ -7,20 +7,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MatricePad Tempo is a two-component embedded system:
 
 - **Arduino firmware** (`arduino/matrice_pad_tempo/matrice_pad_tempo.ino`) — runs on the Matrice Pro board. Drives a 128×32 OLED (song/artist text view or a 16-bar frequency graph, toggled by the encoder's pushbutton), reads a rotary encoder for volume control, handles a 2×2 keypad matrix that sends HID consumer media keys, and communicates with the PC over USB serial at 115200 baud.
-- **Windows host** — polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and sends it all to the Arduino; there is no data sent back from the Arduino during normal operation (volume/media keys go straight to Windows via HID) except for the version handshake described below. Two implementations exist:
-  - **`MatricePadApp/`** (.NET 10) — the active production host, installed via its NSIS installer (`MatricePadApp/build-installer.ps1`) as a Task Scheduler "at logon" task. Design doc: `docs/spec-windows-app.md`.
-  - **`template.py`** / `tempo_core/` (Python) — the original implementation. Retained in the repo for reference; no longer runs at startup. The wire protocol and behavior described throughout this file (serial framing, media-source priority, COM-init stagger, etc.) apply to both implementations — `MatricePadApp` is a from-scratch C# port of the same design, not a different protocol.
+- **`MatricePadApp/`** (.NET 10) — the Windows host. Polls Windows audio state and now-playing media info, captures WASAPI loopback audio for the bar graph, and sends it all to the Arduino; there is no data sent back from the Arduino during normal operation (volume/media keys go straight to Windows via HID) except for the version handshake described below. Installed via its NSIS installer (`MatricePadApp/build-installer.ps1`) as a Task Scheduler "at logon" task. Design doc: `docs/spec-windows-app.md`.
+
+  This started as a Python prototype (`template.py` / `tempo_core/`) before being ported to .NET; the prototype is preserved at the `legacy-python-era` tag if you need to compare behavior, but is no longer part of the working tree.
 - **`MatricePad.SerialCore/`** — a small shared .NET class library holding logic that must not drift between `MatricePadApp` and `MatricePadApp.FirmwareUpdater` (below): VID:PID board discovery, the DTR/RTS-aware `SerialPort` open pattern, and the `VERSION?`/`PONG` handshake. See its "Serial Port Gotchas" note below before touching either consumer's connection code.
 - **`MatricePadApp.FirmwareUpdater/`** (.NET 10, WPF) — a separate, manually-launched tool that checks the connected board's firmware version and can flash the bundled firmware if it's out of date. Design doc: `docs/spec-firmwareUpdater.md`. Not installed/wired into the NSIS installer yet (deferred, see that doc §7) — run via `dotnet run` from the project folder for now.
 
 ## Code Organization
 
-Shared logic lives in two places so feature-specific variants (e.g. a duration/elapsed-time display, a frequency bar graph) can be added as their own sketch/script pair without duplicating the boring 80%:
+Shared logic lives in `arduino/libraries/TempoCore/` so feature-specific sketch variants (e.g. a duration/elapsed-time display, a frequency bar graph) can be added without duplicating the boring 80%:
 
 - **`arduino/libraries/TempoCore/`** — an in-repo Arduino library (not the sketchbook). Holds `ScrollText` (the marquee scroll engine), `StatusIcons` (mute/pause circle glyph + overlay banner drawing), `SerialFraming` (null-terminated `\|\|`-delimited field parsing), and `RotaryEncoder` (debounced quadrature rotation detection). `arduino/matrice_pad_tempo/matrice_pad_tempo.ino` is the baseline sketch built on top of it; `arduino/matrice_pad_tempo_spectrum/` is a standalone bars-only sketch built the same way; future feature sketches go in sibling folders under `arduino/` and `#include <TempoCore.h>` the same way.
-- **`tempo_core/`** (Python package at repo root) — `serial_link.py` (port discovery/connection), `audio_state.py` (pycaw volume/session polling), `media_sources.py` (WinRT + window-title parsing, plus `get_smoothed_elapsed()` for the position stair-step described below), `audio_capture.py` (WASAPI loopback capture + FFT → bar levels), `debug.py` (shared `DEBUG`/`debugPrint`). `template.py` is the baseline entrypoint built on top of it (both media info and audio capture); `spectrum_main.py` is a standalone bars-only entrypoint; future feature scripts live alongside them at repo root and import from `tempo_core` the same way.
-
-**COM threading gotcha:** `audio_capture.py` (soundcard/WASAPI) and `media_sources.py` (WinRT) each do their own first-time COM initialization on their own background thread. Starting both threads at the same instant is a real crash (observed SIGSEGV) — always stagger their `start_*_thread()` calls by ~1s, as both `template.py` and `spectrum_main.py` do. Separately, `audio_capture.py` imports `comtypes` before `soundcard` so the COM apartment mode (STA vs MTA) is claimed by `comtypes` first regardless of what else imports `soundcard` later.
 
 Because `arduino-cli` doesn't resolve libraries outside the sketchbook by default, compile/upload through `arduino/build.ps1` (wraps `arduino-cli` with `--libraries arduino/libraries`) rather than a bare `arduino-cli compile`/`upload`:
 
@@ -41,7 +38,7 @@ Found the hard way while building the version handshake and firmware updater —
 
 Messages are newline-terminated (`\n`), sent PC → Arduino only (the baseline sketch's encoder button no longer round-trips app-volume commands — see below), except for the version handshake below, which is the one request/response exchange on the baseline sketch.
 
-**Baseline sketch** (`matrice_pad_tempo.ino` / `template.py`):
+**Baseline sketch** (`matrice_pad_tempo.ino`):
 ```
 song||artist||volume||muted||paused||bar0,bar1,...,bar15||elapsedSec||durationSec
 ```
@@ -58,7 +55,7 @@ The encoder button toggles the Arduino between a **TEXT** view (song/artist, scr
 
 **Version handshake** (baseline sketch only): once per connection, right after opening the port, `MatricePadApp`'s `SerialManager` sends a bare `VERSION?` line and firmware responds `PONG||<protocolVersion>||<firmwareVersion>` (e.g. `PONG||1||1.1.0`). `protocolVersion` is the wire-format version (`PROTOCOL_VERSION` in the `.ino` / `ExpectedProtocolVersion` in `SerialManager.cs`) — bump both together whenever the baseline packet's field count/order changes; `firmwareVersion` is a human-readable sketch version, diagnostic only. A mismatch is logged as a warning but never blocks the connection; firmware that predates this feature just ignores the unrecognized `VERSION?` line (it has no `||`, so it falls through the existing parser harmlessly) and the companion logs that no handshake response arrived, then proceeds normally.
 
-**Spectrum sketch** (`matrice_pad_tempo_spectrum.ino` / `spectrum_main.py`) — standalone, bars-only, simpler wire format with no song/artist/volume fields:
+**Spectrum sketch** (`matrice_pad_tempo_spectrum.ino`) — standalone, bars-only, simpler wire format with no song/artist/volume fields:
 ```
 bar0,bar1,...,bar15,elapsedSec,durationSec
 ```
@@ -87,29 +84,6 @@ dotnet run
 
 Stops the running `MatricePadApp` companion (needs exclusive port access), detects the connected board, checks its firmware version via the handshake above, and offers to flash the bundled `.hex` if it's out of date -- always with explicit confirmation, never automatically. Restarts the companion afterward regardless of outcome. Design doc: `docs/spec-firmwareUpdater.md`.
 
-## Running the Python Script (legacy, reference only)
-
-The venv is at `.venv310/` (Python 3.10 — required for winrt cp310 wheels). Not run at startup anymore -- kept for comparison/debugging. Activate and run:
-
-```powershell
-.\.venv310\Scripts\Activate.ps1
-python template.py
-```
-
-COM port is auto-detected by USB VID:PID. Pass `--port COMx` to override. Pass `--debug` for verbose output.
-
-## Python Dependencies (legacy)
-
-Installed in `.venv310/`. Key packages:
-
-- `pyserial` — serial communication
-- `pycaw` — Windows Core Audio API (volume get/set via `AudioDevice.EndpointVolume`)
-- `comtypes` — COM interface bridge used by pycaw
-- `pywin32` (`win32gui`, `win32process`) — window enumeration to find active audio session title
-- `winrt` (`winrt-windows-media-control`) — now-playing metadata via `GlobalSystemMediaTransportControls`
-- `numpy` — FFT for the frequency bar graph
-- `soundcard` — WASAPI loopback capture for the frequency bar graph
-
 ## Arduino Libraries
 
 Required in the Arduino IDE / library manager:
@@ -119,7 +93,7 @@ Required in the Arduino IDE / library manager:
 - `Adafruit GFX Library`
 - `Adafruit SSD1306`
 
-**Keypad button layout** (left to right): mute/unmute (`M`), previous track (`R`), play/pause (`P`), next track (`F`) — mapped as HID consumer keys, no Python involvement.
+**Keypad button layout** (left to right): mute/unmute (`M`), previous track (`R`), play/pause (`P`), next track (`F`) — mapped directly to HID consumer keys on the Arduino, no host involvement.
 
 Target board: **Arduino Pro Micro (ATmega32U4, 5V/16MHz)**. In Arduino IDE select *SparkFun Pro Micro 5V/16MHz* or *Arduino Leonardo* (same chip). Upload baud rate is 57600 via avr109 bootloader.
 
@@ -133,14 +107,12 @@ Pin assignments: OLED on SDA=2/SCL=3, encoder on CLK=20/DT=21/BTN=19, keypad row
 - `2` (default) — textSize 2, song on row 0 / artist on row 1, both scroll when long
 - `3` — textSize 1, song word-wrapped across rows 0–1 (static), artist scrolls on row 2
 
-## Media Source Priority (`tempo_core/media_sources.py`)
+## Media Source Priority (`MatricePadApp/Services/MediaInfoProvider.cs`)
 
-Three mutually exclusive cases, checked each loop iteration:
+Three mutually exclusive cases, checked each poll:
 
-| `get_audio_playing_window_title()` returns | Source used |
+| Foreground window title | Source used |
 |---|---|
-| `""` | Browser is active → use WinRT (`GlobalSystemMediaTransportControls`) |
-| `"No media playing"` | Nothing active → send blank song/artist |
+| `""` (browser active) | WinRT (`GlobalSystemMediaTransportControls`) |
+| `"No media playing"` | Nothing active → send blank song/artist (or retain last-known track as paused, if it had a title) |
 | any other string | Non-browser app (StreamPlayer, Zune, VLC) → parse window title |
-
-WinRT runs in a background thread started by `media_sources.start_media_info_thread()` (3s poll, persistent event loop); read its results via `get_shared_media_info()`/`get_last_playing_media_info()`. Window title and volume are polled from the main loop with caching (1s and 2s respectively). Serial packets are only written on content change or every 2.5s keepalive; the Arduino connection timeout is 5s.
